@@ -1,0 +1,40 @@
+{
+  "name": "minECS",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "lint": "eslint --ext .ts ./src",
+    "build:watch": "nodemon --watch src --exec \"npm run build\" --ext ts",
+    "tsc": "tsc --noEmit",
+    "test": "vitest",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "pretty": "prettier --write \"./**/*.{js,jsx,json,ts}\""
+  },
+  "devDependencies": {
+    "@rollup/pluginutils": "^5.1.0",
+    "@types/lodash": "^4.14.191",
+    "@typescript-eslint/eslint-plugin": "^5.55.0",
+    "@typescript-eslint/parser": "^5.55.0",
+    "eslint": "^8.36.0",
+    "eslint-plugin-unused-imports": "^2.0.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^2.8.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.10",
+    "vite-plugin-dts": "^3.6.4",
+    "vitest": "^1.5.2"
+  },
+  "dependencies": {
+    "ajv": "^8.12.0",
+    "js-base64": "^3.7.7",
+    "lodash": "^4.17.21"
+  }
+}
