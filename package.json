@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": "./dist/*.js"
+      "import": "./dist/minecs.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "repository": {

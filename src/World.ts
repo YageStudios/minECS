@@ -380,7 +380,7 @@ export const incrementBitflag = (world: World) => {
   }
 };
 
-export const getSystem = <T extends typeof SystemImpl>(world: World, system: T): InstanceType<T> => {
+export const getSystem = <T extends typeof SystemImpl<any>>(world: World, system: T): InstanceType<T> => {
   const key = system.queryKey;
   return world.systemQueryMap.get(key) as InstanceType<T>;
 };

@@ -2,28 +2,34 @@ import type { Schema } from "./Schema";
 import type { ReadOnlyWorld, World } from "./Types";
 import { getSystem } from "./World";
 
-export function System(schema: typeof Schema, ...schemas: (typeof Schema)[]) {
-  return function (cls: typeof SystemImpl | typeof DrawSystemImpl) {
-    defineSystem([schema, ...schemas], cls);
+export function System(categoryOrSchema: number | typeof Schema, ...schemas: (typeof Schema)[]) {
+  return function (cls: typeof SystemImpl<any> | typeof DrawSystemImpl<any>) {
+    if (typeof categoryOrSchema === "number") {
+      cls.category = categoryOrSchema;
+      defineSystem(schemas, cls);
+    } else {
+      defineSystem([categoryOrSchema, ...schemas], cls);
+    }
   };
 }
 
-export class SystemImpl {
+export class SystemImpl<T extends World = World> {
   static depth: number = 0;
+  static category: number = 0;
   static queryKey: string = "";
 
-  query: (world: World) => number[] = () => [];
-  constructor(query: (world: World) => number[]) {
+  query: (world: T) => number[] = () => [];
+  constructor(query: (world: T) => number[]) {
     this.query = query;
   }
 
-  init?: (world: World, eid: number) => void;
-  cleanup?: (world: World, eid: number) => void;
-  destroy?: (world: World) => void;
+  init?: (world: T, eid: number) => void;
+  cleanup?: (world: T, eid: number) => void;
+  destroy?: (world: T) => void;
 
-  run?: (world: World, eid: number) => void;
+  run?: (world: T, eid: number) => void;
 
-  runAll = (world: World) => {
+  runAll = (world: T) => {
     if (this.run) {
       const ents = this.query(world);
       for (let i = 0; i < ents.length; i++) {
@@ -33,7 +39,7 @@ export class SystemImpl {
   };
 }
 
-export class DrawSystemImpl extends SystemImpl {
+export class DrawSystemImpl<T extends World = World> extends SystemImpl<T> {
   declare init?: (world: ReadOnlyWorld, eid: number) => void;
   declare cleanup?: (world: ReadOnlyWorld, eid: number) => void;
   declare destroy?: (world: ReadOnlyWorld) => void;
