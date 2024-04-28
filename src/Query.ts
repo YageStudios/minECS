@@ -100,17 +100,18 @@ export const commitRemovals = (world: World) => {
   world["dirtyQueries"].clear();
 };
 
-export const queryRemoveEntity = (world: World, q: Query, eid: number) => {
-  if (!q.has(eid) || q.toRemove.has(eid)) return;
+export const queryRemoveEntity = (world: World, q: Query, eid: number): boolean => {
+  if (!q.has(eid) || q.toRemove.has(eid)) return false;
   q.toRemove.add(eid);
   world["dirtyQueries"].add(q);
+  return true;
 };
 
 export const queryAddEntity = (q: Query, eid: number) => {
   q.toRemove.remove(eid);
   // if (!q.has(eid))
   q.entered.add(eid);
-  q.add(eid);
+  return q.add(eid);
 };
 
 export const queryCheckEntity = (world: World, q: Query, eid: number) => {

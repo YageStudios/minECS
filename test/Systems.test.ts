@@ -3,7 +3,7 @@ import { SystemImpl, System, run } from "../src/System";
 import { Component, type, defaultValue } from "../src/Decorators";
 import { Schema } from "../src/Schema";
 import type { World } from "../src/Types";
-import { createWorld, addEntity, addComponent, getSystem } from "../src/World";
+import { createWorld, addEntity, addComponent, getSystem, removeComponent, removeEntity } from "../src/World";
 
 @Component()
 class Position extends Schema {
@@ -206,7 +206,47 @@ test("init order", () => {
   addComponent(world, InitOrderZ, entity);
   addComponent(world, InitOrderA, entity);
   addComponent(world, InitOrder, entity);
+  expect(world(InitOrder, entity).order).toEqual([1, -1, 2, 3]);
 
   run(world);
   expect(world(InitOrder, entity).order).toEqual([1, -1, 2, 3]);
+});
+
+@Component()
+class CleanupComponent extends Schema {
+  @type("boolean")
+  @defaultValue(false)
+  cleanedUp: boolean;
+}
+
+@System(CleanupComponent)
+export class CleanupSystem extends SystemImpl {
+  cleanupTriggered = false;
+  cleanup = (world: World, eid: number) => {
+    world(CleanupComponent, eid).cleanedUp = true;
+    this.cleanupTriggered = true;
+  };
+}
+
+test("cleanup component", () => {
+  const world = createWorld();
+  const entity = addEntity(world);
+  addComponent(world, CleanupComponent, entity);
+
+  run(world);
+  expect(world(CleanupComponent, entity).cleanedUp).toEqual(false);
+  removeComponent(world, CleanupComponent, entity);
+  expect(world(CleanupComponent, entity).cleanedUp).toEqual(true);
+});
+
+test("cleanup entity", () => {
+  const world = createWorld();
+  const entity = addEntity(world);
+  addComponent(world, CleanupComponent, entity);
+
+  run(world);
+  expect(world(CleanupComponent, entity).cleanedUp).toEqual(false);
+  expect(getSystem(world, CleanupSystem).cleanupTriggered).toEqual(false);
+  removeEntity(world, entity);
+  expect(getSystem(world, CleanupSystem).cleanupTriggered).toEqual(true);
 });

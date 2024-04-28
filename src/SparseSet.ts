@@ -15,8 +15,9 @@ export const SparseSet = () => {
   const has = (val: number) => dense[sparse[val]] === val;
 
   const add = (val: number) => {
-    if (has(val)) return;
+    if (has(val)) return false;
     sparse[val] = dense.push(val) - 1;
+    return true;
   };
 
   const remove = (val: number) => {

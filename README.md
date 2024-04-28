@@ -82,7 +82,72 @@ const newWorldFromBinary = deserializeWorld(buffer);
 const newWorldFromBase64 = deserializeWorld(base64);
 ```
 
-## Advanced Component Types
+## Additional Features and Systems
+
+In addition to the core functionalities, minECS offers a suite of advanced features to provide more control and flexibility in game development. These include system execution controls, manual and automated system runs, system initialization and cleanup, advanced component types, and detailed entity management. Explore these features to fully leverage the power of minECS in your projects.
+
+### System Execution Control with Depth
+
+In minECS, the `depth` property of a system determines the order and automatic execution behavior. Systems with different depth values are executed in ascending order, where lower numbers run first.
+
+```ts
+@System(...)
+class SomeSystem extends SystemImpl {
+  static depth = 0;  // Lower numbers run first, executed automatically
+}
+```
+
+**Manual Execution Only**: If a system is assigned a depth less than `0` it will not run automatically during the standard `run` cycle. Instead, it must be run manually. This is useful for systems that require explicit control or should only execute under specific conditions:
+
+```ts
+@System(...)
+class ManualOnlySystem extends SystemImpl {
+  static depth = -1;  // This system will only run when manually triggered
+
+  run = (world: World, eid: number) => {
+    // Implementation details
+  };
+}
+```
+
+To run a system manually, you can use the `run` or `runAll` methods of the system instance, providing flexibility in how and when certain parts of your game logic are executed:
+
+```ts
+const world = createWorld();
+const system = getSystem(world, ManualOnlySystem);
+system.runAll(world); // Runs the system manually for all entities
+system.run(world, entity); // Runs the system manually for a specific entity
+```
+
+Adding this information helps clarify the operational nuances of system execution in minECS, ensuring users understand how to leverage system depth for both automatic and manual execution scenarios.
+
+### System Initialization
+
+Systems can have an initialization function that runs once when a system is created for a world, or when a new entity that matches the system's criteria is added:
+
+```ts
+@System(...)
+class SomeInitializationSystem extends SystemImpl {
+  init = (world: World, eid: number) => {
+    // Initialization code here
+  };
+}
+```
+
+### System Cleanup
+
+Systems can define a cleanup function that executes when a component is removed or an entity is deleted. This helps in managing state cleanup reliably:
+
+```ts
+@System(...)
+class SomeCleanupSystem extends SystemImpl {
+  cleanup = (world: World, eid: number) => {
+    // Cleanup code here
+  };
+}
+```
+
+### Advanced Component Types
 
 Enhance your components with nested structures, nullable options, and various data types for more complex scenarios:
 
@@ -121,4 +186,16 @@ class NestedComplex extends Schema {
 }
 ```
 
-Explore and contribute to minECS, a system built for developers who need a straightforward, robust solution for game state management. Start integrating minECS into your game development workflow today!
+### Entity and Component Management
+
+The library provides comprehensive functions to manage entities and components dynamically:
+
+```ts
+const world = createWorld();
+const entity = addEntity(world);
+addComponent(world, SomeComponent, entity);
+removeComponent(world, SomeComponent, entity);
+removeEntity(world, entity); // Cleans up all components associated with the entity
+```
+
+These functions give you full control over the entities and components in the system, ensuring that you can dynamically adjust the game world as needed.

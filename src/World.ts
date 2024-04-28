@@ -29,9 +29,17 @@ export const removeEntity = (world: World, eid: number) => {
   if (!world["entitySparseSet"].has(eid)) return;
 
   // Remove entity from all queries
-  // TODO: archetype graph
+
+  const removeSystems: SystemImpl[] = [];
+
   world.queries.forEach((q) => {
-    queryRemoveEntity(world, q, eid);
+    if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
+      removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+    }
+  });
+
+  removeSystems.forEach((s) => {
+    s.cleanup?.(world, eid);
   });
 
   // Free the entity
@@ -85,20 +93,28 @@ export function addComponent<T>(
     store[key][eid] = value;
   });
 
+  const removeSystems: SystemImpl[] = [];
+
   queries.forEach((q) => {
     // remove this entity from toRemove if it exists in this query
     q.toRemove.remove(eid);
     const match = queryCheckEntity(world, q, eid);
     if (match) {
-      queryAddEntity(q, eid);
-      if (world.systemQueryMap.has(q.queryKey)) {
+      if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
         world.systemQueryMap.get(q.queryKey)!.init?.(world, eid);
       }
     }
     if (!match) {
       q.entered.remove(eid);
-      queryRemoveEntity(world, q, eid);
+
+      if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
+        removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+      }
     }
+  });
+
+  removeSystems.forEach((s) => {
+    s.cleanup?.(world, eid);
   });
 }
 
@@ -145,18 +161,27 @@ export const removeComponent = (world: World, component: typeof Schema, eid: num
   // Remove flag from entity bitmask
   world["entityMasks"][generationId][eid] &= ~bitflag;
 
+  const removeSystems: SystemImpl[] = [];
   // todo: archetype graph
   queries.forEach((q) => {
     // remove this entity from toRemove if it exists in this query
     q.toRemove.remove(eid);
     const match = queryCheckEntity(world, q, eid);
     if (match) {
-      queryAddEntity(q, eid);
+      if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
+        world.systemQueryMap.get(q.queryKey)!.init?.(world, eid);
+      }
     }
     if (!match) {
       q.entered.remove(eid);
-      queryRemoveEntity(world, q, eid);
+      if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
+        removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+      }
     }
+  });
+
+  removeSystems.forEach((s) => {
+    s.cleanup?.(world, eid);
   });
 };
 
