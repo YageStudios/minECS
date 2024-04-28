@@ -160,18 +160,6 @@ export function required() {
   };
 }
 
-export function Enum(enumToCheck: any) {
-  return function (target: any, key: string) {
-    generateSchema(target).setEnum(key, enumToCheck);
-  };
-}
-
-export function mapType(type: any) {
-  return function (target: any, key: string) {
-    generateSchema(target).setMapType(key, type);
-  };
-}
-
 export function nullable() {
   return function (target: any, key: string) {
     generateSchema(target).setType(key, "null");

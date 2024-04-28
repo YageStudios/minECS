@@ -396,7 +396,7 @@ const serializeEntity = (world: World, entityId: number) => {
   };
 };
 
-export const serializeToJSON = (world: World) => {
+const serializeToJSON = (world: World) => {
   return world.entitySparseSet.dense.map((entityId) => serializeEntity(world, entityId));
 };
 
@@ -407,7 +407,7 @@ const serializeSparseSet = (set: ReturnType<typeof SparseSet>) => {
   };
 };
 
-export const serializeQuery = (q: Query): SerializedQuery => {
+const serializeQuery = (q: Query): SerializedQuery => {
   return {
     queryKey: q.queryKey,
     generations: [...q.generations],
