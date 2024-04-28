@@ -119,11 +119,9 @@ system.runAll(world); // Runs the system manually for all entities
 system.run(world, entity); // Runs the system manually for a specific entity
 ```
 
-Adding this information helps clarify the operational nuances of system execution in minECS, ensuring users understand how to leverage system depth for both automatic and manual execution scenarios.
-
 ### System Initialization
 
-Systems can have an initialization function that runs once when a system is created for a world, or when a new entity that matches the system's criteria is added:
+Systems can have an initialization function that runs once when a new entity that matches the system's criteria is added:
 
 ```ts
 @System(...)
