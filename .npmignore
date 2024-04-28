@@ -24,7 +24,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.aider*
 
 
 vite.config.js.timestamp*
