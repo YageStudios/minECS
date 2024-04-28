@@ -1,12 +1,15 @@
 {
   "name": "minECS",
-  "private": true,
   "version": "0.0.1",
   "type": "module",
   "exports": {
     ".": {
       "import": "./dist/*.js"
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YageStudios/minECS.git"
   },
   "scripts": {
     "dev": "vite",
