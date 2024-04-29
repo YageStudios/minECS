@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import type { Store } from "./Storage";
 import { free, resetStoreFor } from "./Storage";
-import type { Constructor, Query, World, WorldComponent } from "./Types";
+import type { Constructor, Query, ReadOnlyWorld, World, WorldComponent } from "./Types";
 import { SparseSet } from "./SparseSet";
 import type { Schema } from "./Schema";
 import { componentList, freezeComponentOrder } from "./Component";
@@ -54,20 +54,11 @@ export const removeEntity = (world: World, eid: number) => {
 
 export const entityExists = (world: World, eid: number) => world["entitySparseSet"].has(eid);
 
-export function addComponent<T>(world: World, component: Constructor<T>, eid: number, overrides?: Partial<T>): void;
 export function addComponent<T>(
   world: World,
   component: Constructor<T>,
   eid: number,
-  overrides: Partial<T>,
-  reset: boolean
-): void;
-export function addComponent<T>(world: World, component: Constructor<T>, eid: number, reset: boolean): void;
-export function addComponent<T>(
-  world: World,
-  component: Constructor<T>,
-  eid: number,
-  resetOrOverride?: Partial<T> | boolean,
+  overrides?: Partial<T>,
   reset?: boolean
 ) {
   const schema = component as unknown as typeof Schema;
@@ -84,11 +75,10 @@ export function addComponent<T>(
   world["entityMasks"][generationId][eid] |= bitflag;
 
   // // Zero out each property value
-  if (resetOrOverride !== false && reset !== false) {
+  if (reset !== false) {
     resetStoreFor(store, eid);
   }
-  let overrides = typeof resetOrOverride === "object" ? resetOrOverride : {};
-  overrides = validateComponent(schema, eid, overrides);
+  overrides = validateComponent(schema, eid, overrides ?? {}) as T;
   Object.entries(overrides).forEach(([key, value]) => {
     store[key][eid] = value;
   });
@@ -334,8 +324,8 @@ export const getComponentSchema = (world: World, component: Store) => {
   return world.componentSchemaStore.get(component)!;
 };
 
-export const hasComponent = (world: World, component: typeof Schema, eid: number) => {
-  const registeredComponent = world["componentMap"].get(component);
+export const hasComponent = <T extends Schema>(world: World, component: Constructor<T>, eid: number) => {
+  const registeredComponent = world["componentMap"].get(component as unknown as typeof Schema);
   if (!registeredComponent) return false;
   const { generationId, bitflag } = registeredComponent;
   const mask = world["entityMasks"][generationId][eid];
@@ -383,4 +373,25 @@ export const incrementBitflag = (world: World) => {
 export const getSystem = <T extends typeof SystemImpl<any>>(world: World, system: T): InstanceType<T> => {
   const key = system.queryKey;
   return world.systemQueryMap.get(key) as InstanceType<T>;
+};
+
+export const getSystemsByType = <T extends typeof SystemImpl<any>>(world: World, type: string): InstanceType<T>[] => {
+  const keys = Array.from(world.systemQueryMap.keys()).filter((key) => key.split("|").includes(type));
+  if (keys.length) {
+    return keys.map((key) => world.systemQueryMap.get(key) as InstanceType<T>);
+  }
+  return [];
+};
+
+export const stepWorld = (world: World) => {
+  world.frame++;
+  systemRunList.forEach((system) => {
+    getSystem(world, system[0]).runAll(world);
+  });
+};
+
+export const stepWorldDraw = (world: ReadOnlyWorld) => {
+  world.drawSystems.forEach((system) => {
+    system.runAll(world);
+  });
 };

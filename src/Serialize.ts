@@ -1,4 +1,4 @@
-import { cloneDeep } from "lodash";
+import lodash from "lodash";
 import type { Schema } from "./Schema";
 import type { Store } from "./Storage";
 import { $indexBytes, $indexType, $storeBase, $storeFlattened, $tagStore } from "./Storage";
@@ -7,6 +7,8 @@ import { SerialMode } from "./Types";
 import type { SparseSet } from "./SparseSet";
 import { Base64 } from "js-base64";
 import { getComponentSchema, hasComponent } from "./World";
+
+const { cloneDeep } = lodash;
 
 export const SERIALIZER_VERSION = 1;
 

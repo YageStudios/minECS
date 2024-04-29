@@ -63,7 +63,7 @@ addComponent(world, Velocity, entity, {
 
 console.log({ ...world(Position, entity) }); // { x: 0, y: 0, type: "Position" }
 
-run(world);
+stepWorld(world);
 
 console.log({ ...world(Position, entity) }); //  { x: 30, y: 30, type: "Position" }
 ```

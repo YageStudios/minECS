@@ -12,13 +12,16 @@ export {
   deleteWorld,
   hasComponent,
   getSystem,
+  getSystemsByType,
   entityExists,
   addEntity,
   removeEntity,
   addComponent,
   removeComponent,
   disableComponent,
+  stepWorld,
 } from "./World";
+export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";
 export { serializeWorld } from "./Serialize";
 

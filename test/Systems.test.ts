@@ -1,9 +1,17 @@
 import { expect, test } from "vitest";
-import { SystemImpl, System, run } from "../src/System";
+import { SystemImpl, System } from "../src/System";
 import { Component, type, defaultValue } from "../src/Decorators";
 import { Schema } from "../src/Schema";
 import type { World } from "../src/Types";
-import { createWorld, addEntity, addComponent, getSystem, removeComponent, removeEntity } from "../src/World";
+import {
+  createWorld,
+  addEntity,
+  addComponent,
+  getSystem,
+  removeComponent,
+  removeEntity,
+  stepWorld,
+} from "../src/World";
 
 @Component()
 class Position extends Schema {
@@ -65,12 +73,12 @@ test("defineSystem", () => {
   addComponent(world, Position, movingEntity, { x: 10, y: 20 });
   addComponent(world, Velocity, movingEntity, { x: 1, y: 2 });
 
-  run(world);
+  stepWorld(world);
   expect(world(Position, entity).x).toEqual(11);
   expect(world(Position, entity).y).toEqual(21);
   expect(world(Position, movingEntity).x).toEqual(11);
   expect(world(Position, movingEntity).y).toEqual(22);
-  run(world);
+  stepWorld(world);
   expect(world(Position, entity).x).toEqual(12);
   expect(world(Position, entity).y).toEqual(22);
   expect(world(Position, movingEntity).x).toEqual(12);
@@ -121,9 +129,9 @@ test("defineSystem order", () => {
   addComponent(world, Early, entity);
   addComponent(world, Late, entity);
 
-  run(world);
+  stepWorld(world);
   expect(world(Order, entity).order).toEqual([0, 1, 3]);
-  run(world);
+  stepWorld(world);
   expect(world(Order, entity).order).toEqual([0, 1, 3, 1, 3]);
 });
 
@@ -147,7 +155,7 @@ test("manual run", () => {
   const entity = addEntity(world);
   addComponent(world, Manual, entity);
 
-  run(world);
+  stepWorld(world);
   expect(world(Manual, entity).bool).toEqual(false);
   getSystem(world, ManualSystem).runAll(world);
   expect(world(Manual, entity).bool).toEqual(true);
@@ -208,7 +216,7 @@ test("init order", () => {
   addComponent(world, InitOrder, entity);
   expect(world(InitOrder, entity).order).toEqual([1, -1, 2, 3]);
 
-  run(world);
+  stepWorld(world);
   expect(world(InitOrder, entity).order).toEqual([1, -1, 2, 3]);
 });
 
@@ -233,7 +241,7 @@ test("cleanup component", () => {
   const entity = addEntity(world);
   addComponent(world, CleanupComponent, entity);
 
-  run(world);
+  stepWorld(world);
   expect(world(CleanupComponent, entity).cleanedUp).toEqual(false);
   removeComponent(world, CleanupComponent, entity);
   expect(world(CleanupComponent, entity).cleanedUp).toEqual(true);
@@ -244,7 +252,7 @@ test("cleanup entity", () => {
   const entity = addEntity(world);
   addComponent(world, CleanupComponent, entity);
 
-  run(world);
+  stepWorld(world);
   expect(world(CleanupComponent, entity).cleanedUp).toEqual(false);
   expect(getSystem(world, CleanupSystem).cleanupTriggered).toEqual(false);
   removeEntity(world, entity);

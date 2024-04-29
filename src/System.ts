@@ -1,6 +1,5 @@
 import type { Schema } from "./Schema";
 import type { ReadOnlyWorld, World } from "./Types";
-import { getSystem } from "./World";
 
 export function System(categoryOrSchema: number | typeof Schema, ...schemas: (typeof Schema)[]) {
   return function (cls: typeof SystemImpl<any> | typeof DrawSystemImpl<any>) {
@@ -87,18 +86,5 @@ export const defineSystem = (components: (typeof Schema)[], system: typeof Syste
     } else {
       systemRunList.push([system, components]);
     }
-  });
-};
-
-export const run = (world: World) => {
-  systemRunList.forEach((system) => {
-    getSystem(world, system[0]).runAll(world);
-  });
-  world.frame++;
-};
-
-export const runDraw = (world: ReadOnlyWorld) => {
-  world.drawSystems.forEach((system) => {
-    system.runAll(world);
   });
 };

@@ -154,7 +154,7 @@ export type WorldComponent = {
 
 export interface World {
   <T extends Schema>(schema: Constructor<T>, eid: number): T;
-  <T extends Schema>(schema: Constructor<T>): typeof Schema;
+  <T extends Schema>(schema: Constructor<T>): WorldComponent;
   entityCursor: number;
   componentSchemaStore: Map<Store, WorldComponent>;
   componentMap: Map<typeof Schema, WorldComponent>;
@@ -175,7 +175,7 @@ export interface World {
 
 export interface ReadOnlyWorld extends World {
   <T extends Schema>(schema: Constructor<T>, eid: number): Readonly<T>;
-  <T extends Schema>(schema: Constructor<T>): Readonly<typeof Schema>;
+  <T extends Schema>(schema: Constructor<T>): Readonly<WorldComponent>;
 }
 
 export const isQuery = (query: any): query is Query => {
@@ -217,17 +217,3 @@ export const TYPES_NAMES = {
   f32: "Float32",
   f64: "Float64",
 };
-
-// interface SystemAll {
-//   runAll: (query: Query, world: World) => void;
-//   init: (eid: number, world: World) => void;
-//   cleanup: (eid: number, world: World) => void;
-// }
-
-// interface SystemOne {
-//   run: (eid: number, world: World) => void;
-//   init: (eid: number, world: World) => void;
-//   cleanup: (eid: number, world: World) => void;
-// }
-
-// export type SystemType = (query: Query, world: World) => void | Constructor<SystemAll | SystemOne>;

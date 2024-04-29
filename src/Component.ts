@@ -12,7 +12,7 @@ import type { Schema } from "./Schema";
 export const componentKeyMap = new Map<string, typeof Schema>();
 export const componentSchemaStore = new Map<Store, typeof Schema>();
 export const componentIndex = new Map<string, number>();
-export const componentList: (typeof Schema)[] = [];
+export const componentList: Readonly<(typeof Schema)[]> = [];
 
 export const freezeComponentOrder = () => {
   if (componentList.length) return;
@@ -23,6 +23,7 @@ export const freezeComponentOrder = () => {
     const component = componentKeyMap.get(key)!;
     // @ts-ignore
     component.index = index;
+    // @ts-ignore
     componentList.push(component);
   });
 };
@@ -46,4 +47,8 @@ export const defineComponent = (componentSchema: typeof Schema, size = 100000) =
     }
     return store;
   };
+};
+
+export const getComponentByType = (type: string) => {
+  return componentKeyMap.get(type);
 };

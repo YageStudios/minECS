@@ -2,11 +2,11 @@ import { expect, test } from "vitest";
 import { Component, defaultValue, nullable, type } from "../src/Decorators";
 import type { World } from "../src/Types";
 import { SerialMode } from "../src/Types";
-import { System, SystemImpl, run } from "../src/System";
+import { System, SystemImpl } from "../src/System";
 import { Schema } from "../src/Schema";
 import { deserializeWorld } from "../src/Deserialize";
 import { serializeWorld } from "../src/Serialize";
-import { createWorld, addEntity, addComponent } from "../src/World";
+import { createWorld, addEntity, addComponent, stepWorld } from "../src/World";
 
 @Component()
 class Position extends Schema {
@@ -195,7 +195,7 @@ const runSystemTest = (serialization: SerialMode.BINARY | SerialMode.JSON) => ()
   const entity = addEntity(world);
   addComponent(world, TestComponent, entity);
 
-  run(world);
+  stepWorld(world);
   const snapshot = serializeWorld(serialization as any, world);
 
   const cloneWorld = createWorld();
@@ -206,7 +206,7 @@ const runSystemTest = (serialization: SerialMode.BINARY | SerialMode.JSON) => ()
 
   expect(cloneWorld(TestComponent, entity).x).toEqual(7);
   expect(cloneWorld(TestComponent, nextEntity).x).toEqual(6);
-  run(cloneWorld);
+  stepWorld(cloneWorld);
   expect(cloneWorld(TestComponent, entity).x).toEqual(8);
   expect(cloneWorld(TestComponent, nextEntity).x).toEqual(7);
 };
