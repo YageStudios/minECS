@@ -20,6 +20,7 @@ export {
   removeComponent,
   disableComponent,
   stepWorld,
+  stepWorldDraw,
 } from "./World";
 export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";

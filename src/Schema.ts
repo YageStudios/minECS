@@ -1,5 +1,6 @@
 import type { Store } from "./Storage";
 import { altNumberTypes } from "./Types";
+import { cloneDeep as clone } from "lodash";
 
 export class Schema {
   static readonly schema: any;

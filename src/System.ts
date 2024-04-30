@@ -38,14 +38,14 @@ export class SystemImpl<T extends World = World> {
   };
 }
 
-export class DrawSystemImpl<T extends World = World> extends SystemImpl<T> {
-  declare init?: (world: ReadOnlyWorld, eid: number) => void;
-  declare cleanup?: (world: ReadOnlyWorld, eid: number) => void;
-  declare destroy?: (world: ReadOnlyWorld) => void;
+export class DrawSystemImpl<T extends ReadOnlyWorld = ReadOnlyWorld> extends SystemImpl<T> {
+  declare init?: (world: T, eid: number) => void;
+  declare cleanup?: (world: T, eid: number) => void;
+  declare destroy?: (world: T) => void;
 
-  declare run?: (world: ReadOnlyWorld, eid: number) => void;
+  declare run?: (world: T, eid: number) => void;
 
-  declare runAll: (world: ReadOnlyWorld) => void;
+  declare runAll: (world: T) => void;
 }
 
 const isDrawSystem = (system: typeof SystemImpl | typeof DrawSystemImpl): system is typeof DrawSystemImpl => {
@@ -63,6 +63,7 @@ export const defineSystem = (components: (typeof Schema)[], system: typeof Syste
     .map(({ type }) => type)
     .sort()
     .join("|");
+
   systems.set(key, [system as typeof SystemImpl, components]);
   system.queryKey = key;
 
@@ -78,6 +79,10 @@ export const defineSystem = (components: (typeof Schema)[], system: typeof Syste
     if (a[1] > b[1]) return 1;
     return a[0].localeCompare(b[0]);
   });
+  systemManualList.length = 0;
+  drawSystemRunList.length = 0;
+  systemRunList.length = 0;
+
   sortedSystems.forEach(([, depth, [system, components]]) => {
     if (depth < 0) {
       systemManualList.push([system, components]);

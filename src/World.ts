@@ -80,7 +80,7 @@ export function addComponent<T>(
   }
   overrides = validateComponent(schema, eid, overrides ?? {}) as T;
   Object.entries(overrides).forEach(([key, value]) => {
-    store[key][eid] = value;
+    if (key !== "type") store[key][eid] = value;
   });
 
   const removeSystems: SystemImpl[] = [];
@@ -385,13 +385,18 @@ export const getSystemsByType = <T extends typeof SystemImpl<any>>(world: World,
 
 export const stepWorld = (world: World) => {
   world.frame++;
-  systemRunList.forEach((system) => {
-    getSystem(world, system[0]).runAll(world);
+  systemRunList.forEach(([System]) => {
+    const system = getSystem(world, System);
+    if (system.query(world).length) {
+      system.runAll(world);
+    }
   });
 };
 
 export const stepWorldDraw = (world: ReadOnlyWorld) => {
   world.drawSystems.forEach((system) => {
-    system.runAll(world);
+    if (system.query(world).length) {
+      system.runAll(world);
+    }
   });
 };
