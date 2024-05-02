@@ -168,7 +168,7 @@ export interface World {
   queries: Set<Query>;
   dirtyQueries: Set<Query>;
   frame: number;
-  systemQueryMap: Map<string, SystemImpl>;
+  systemQueryMap: Map<string, SystemImpl[]>;
   systems: any[];
   drawSystems: any[];
 }
@@ -190,6 +190,10 @@ export type Query = ReturnType<typeof SparseSet> & {
     [key: number]: number;
   };
   queryKey: string;
+};
+
+export type QueryInstance<T extends World = World> = ((world: T) => number[]) & {
+  has: (world: T, eid: number) => boolean;
 };
 
 export const TYPES_ENUM = {

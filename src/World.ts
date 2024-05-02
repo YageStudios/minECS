@@ -34,7 +34,7 @@ export const removeEntity = (world: World, eid: number) => {
 
   world.queries.forEach((q) => {
     if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-      removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+      removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
     }
   });
 
@@ -91,14 +91,15 @@ export function addComponent<T>(
     const match = queryCheckEntity(world, q, eid);
     if (match) {
       if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        world.systemQueryMap.get(q.queryKey)!.init?.(world, eid);
+        const systems = world.systemQueryMap.get(q.queryKey)!;
+        systems.forEach((system) => system.init?.(world, eid));
       }
     }
     if (!match) {
       q.entered.remove(eid);
 
       if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+        removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
       }
     }
   });
@@ -159,13 +160,14 @@ export const removeComponent = (world: World, component: typeof Schema, eid: num
     const match = queryCheckEntity(world, q, eid);
     if (match) {
       if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        world.systemQueryMap.get(q.queryKey)!.init?.(world, eid);
+        const systems = world.systemQueryMap.get(q.queryKey)!;
+        systems.forEach((system) => system.init?.(world, eid));
       }
     }
     if (!match) {
       q.entered.remove(eid);
       if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        removeSystems.unshift(world.systemQueryMap.get(q.queryKey)!);
+        removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
       }
     }
   });
@@ -248,7 +250,7 @@ export const createWorld = (size?: number): World => {
     queryMap: new Map<string, Query>(),
     dirtyQueries: new Set<Query>(),
     queries: new Set<any>(),
-    systemQueryMap: new Map<string, SystemImpl>(),
+    systemQueryMap: new Map<string, SystemImpl[]>(),
     systems: [],
     drawSystems: [],
   });
@@ -267,7 +269,12 @@ export const createWorld = (size?: number): World => {
 
     const system = new SystemConstructor(query);
 
-    world.systemQueryMap.set($query, system);
+    if (world.systemQueryMap.has($query)) {
+      const existingSystems = world.systemQueryMap.get($query)!;
+      world.systemQueryMap.set($query, [...existingSystems, system]);
+    } else {
+      world.systemQueryMap.set($query, [system]);
+    }
 
     world.systems.push(system);
   });
@@ -282,7 +289,12 @@ export const createWorld = (size?: number): World => {
 
     const system = new SystemConstructor(query);
 
-    world.systemQueryMap.set($query, system);
+    if (world.systemQueryMap.has($query)) {
+      const existingSystems = world.systemQueryMap.get($query)!;
+      world.systemQueryMap.set($query, [...existingSystems, system]);
+    } else {
+      world.systemQueryMap.set($query, [system]);
+    }
 
     world.systems.push(system);
   });
@@ -296,7 +308,12 @@ export const createWorld = (size?: number): World => {
     query(world);
     const system = new SystemConstructor(query);
 
-    world.systemQueryMap.set($query, system);
+    if (world.systemQueryMap.has($query)) {
+      const existingSystems = world.systemQueryMap.get($query)!;
+      world.systemQueryMap.set($query, [...existingSystems, system]);
+    } else {
+      world.systemQueryMap.set($query, [system]);
+    }
 
     world.drawSystems.push(system);
   });
@@ -372,7 +389,7 @@ export const incrementBitflag = (world: World) => {
 
 export const getSystem = <T extends typeof SystemImpl<any>>(world: World, system: T): InstanceType<T> => {
   const key = system.queryKey;
-  return world.systemQueryMap.get(key) as InstanceType<T>;
+  return world.systemQueryMap.get(key)?.find((s) => s instanceof system) as InstanceType<T>;
 };
 
 export const getSystemsByType = <T extends typeof SystemImpl<any>>(world: World, type: string): InstanceType<T>[] => {

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
-import type { Query, World } from "./Types";
+import type { Query, QueryInstance, World } from "./Types";
 import { SparseSet } from "./SparseSet";
 import type { Schema } from "./Schema";
 import { getEntityCursor } from "./World";
@@ -10,7 +10,7 @@ import { getEntityCursor } from "./World";
  *
  ****************************************************/
 
-export const queryMap = new Map<string, (world: World) => number[]>();
+export const queryMap = new Map<string, QueryInstance>();
 
 export const defineQuery = (components: (typeof Schema)[]) => {
   const $query = components
@@ -70,7 +70,7 @@ export const defineQuery = (components: (typeof Schema)[]) => {
     return query;
   };
 
-  const queryFunc = (world: World) => {
+  const q = (world: World) => {
     if (!world["queryMap"].has($query)) {
       world["queryMap"].set($query, createQuery(world));
     }
@@ -80,6 +80,10 @@ export const defineQuery = (components: (typeof Schema)[]) => {
 
     return q.dense;
   };
+
+  const queryFunc = Object.assign(q, {
+    has: (world: World, eid: number) => world["queryMap"].get($query)?.has(eid) ?? false,
+  });
 
   queryMap.set($query, queryFunc);
 

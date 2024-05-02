@@ -1,5 +1,5 @@
 import type { Schema } from "./Schema";
-import type { ReadOnlyWorld, World } from "./Types";
+import type { QueryInstance, ReadOnlyWorld, World } from "./Types";
 
 export function System(categoryOrSchema: number | typeof Schema, ...schemas: (typeof Schema)[]) {
   return function (cls: typeof SystemImpl<any> | typeof DrawSystemImpl<any>) {
@@ -17,8 +17,8 @@ export class SystemImpl<T extends World = World> {
   static category: number = 0;
   static queryKey: string = "";
 
-  query: (world: T) => number[] = () => [];
-  constructor(query: (world: T) => number[]) {
+  query: QueryInstance<T>;
+  constructor(query: QueryInstance<T>) {
     this.query = query;
   }
 
@@ -52,7 +52,7 @@ const isDrawSystem = (system: typeof SystemImpl | typeof DrawSystemImpl): system
   return system.prototype instanceof DrawSystemImpl;
 };
 
-const systems = new Map<string, [typeof SystemImpl, (typeof Schema)[]]>();
+const systems = new Map<string, [(typeof SystemImpl)[], (typeof Schema)[]]>();
 
 export const systemRunList: [typeof SystemImpl, (typeof Schema)[]][] = [];
 export const drawSystemRunList: [typeof DrawSystemImpl, (typeof Schema)[]][] = [];
@@ -64,16 +64,25 @@ export const defineSystem = (components: (typeof Schema)[], system: typeof Syste
     .sort()
     .join("|");
 
-  systems.set(key, [system as typeof SystemImpl, components]);
+  if (systems.has(key)) {
+    const [currentSystems] = systems.get(key)!;
+    systems.set(key, [[...currentSystems, system as typeof SystemImpl], components]);
+  } else {
+    systems.set(key, [[system as typeof SystemImpl], components]);
+  }
   system.queryKey = key;
 
   systemRunList.length = 0;
   const sortedSystems = (
-    Array.from(systems.entries()).map(([key, [system, components]]) => [
-      key,
-      (system as typeof DrawSystemImpl | typeof SystemImpl).depth ?? 0,
-      [system, components],
-    ]) as [string, number, [typeof SystemImpl | typeof DrawSystemImpl, (typeof Schema)[]]][]
+    Array.from(systems.entries())
+      .map(([key, [systems, components]]) => {
+        return systems.map((system) => [
+          key,
+          (system as typeof DrawSystemImpl | typeof SystemImpl).depth ?? 0,
+          [system, components],
+        ]);
+      })
+      .flat(1) as [string, number, [typeof SystemImpl | typeof DrawSystemImpl, (typeof Schema)[]]][]
   ).sort((a, b) => {
     if (a[1] < b[1]) return -1;
     if (a[1] > b[1]) return 1;
