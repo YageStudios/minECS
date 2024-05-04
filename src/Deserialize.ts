@@ -410,6 +410,12 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
   where += 4;
   world.bitflag = bitflag;
 
+  world.entityMasks = [new Uint32Array(size)];
+  const maxGenerationId = Math.max(...Array.from(world.componentMap.values()).map((c) => c.generationId));
+  for (let i = 1; i <= maxGenerationId; i++) {
+    world.entityMasks.push(new Uint32Array(size));
+  }
+
   const frame = view.getUint32(where);
   where += 4;
   world.frame = frame;

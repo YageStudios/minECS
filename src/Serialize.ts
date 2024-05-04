@@ -423,16 +423,16 @@ const serializeQuery = (q: Query): SerializedQuery => {
 const serializeSparseSetToBuffer = (set: ReturnType<typeof SparseSet>, where: number, view: DataView) => {
   view.setUint16(where, set.dense.length);
   where += 2;
-  set.dense.forEach((d) => {
-    view.setUint16(where, d);
+  for (let i = 0; i < set.dense.length; i++) {
+    view.setUint16(where, set.dense[i] ?? -1);
     where += 2;
-  });
+  }
   view.setUint16(where, set.sparse.length);
   where += 2;
-  set.sparse.forEach((s) => {
-    view.setUint16(where, s ?? -1);
+  for (let i = 0; i < set.sparse.length; i++) {
+    view.setUint16(where, set.sparse[i] ?? -1);
     where += 2;
-  });
+  }
   return where;
 };
 
