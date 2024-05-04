@@ -25,6 +25,7 @@ export {
 export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";
 export { serializeWorld } from "./Serialize";
+export { deserializeWorld } from "./Deserialize";
 
 export { System, SystemImpl, DrawSystemImpl } from "./System";
 
