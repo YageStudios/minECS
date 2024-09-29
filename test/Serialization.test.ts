@@ -50,6 +50,9 @@ class NestedComplex extends Schema {
 
   @type([Complex])
   complexes: Complex[];
+
+  @type({ set: Complex })
+  complexSet: Set<Complex>;
 }
 
 const worldTestState = [
@@ -108,6 +111,19 @@ const worldTestState = [
           nullableString: null,
         },
       ],
+      complexSet: {
+        a: {
+          position: {
+            x: 5,
+            y: 30,
+          },
+          message: "hello",
+          numbers: [1, 2, 3],
+          flag: true,
+          obj: { a: 1 },
+          nullableString: null,
+        },
+      },
     },
   ],
 ];

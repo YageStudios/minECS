@@ -126,7 +126,7 @@ export function type(
     } else if (Array.isArray(type)) {
       schema.setArrayType(key, type[0]);
     } else if (typeof type === "object" && type?.set) {
-      schema.setArrayType(key, type.set);
+      schema.setMapType(key, type.set);
     } else if (typeof type === "function") {
       schema.setObjectType(key, type);
     } else {
