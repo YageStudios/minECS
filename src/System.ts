@@ -22,31 +22,23 @@ export class SystemImpl<T extends World = World> {
     this.query = query;
   }
 
-  init?: (world: T, eid: number) => void;
-  cleanup?: (world: T, eid: number) => void;
-  destroy?: (world: T) => void;
+  init?(world: T, eid: number): void;
+  cleanup?(world: T, eid: number): void;
+  destroy?(world: T): void;
 
-  run?: (world: T, eid: number) => void;
+  run?(world: T, eid: number): void;
 
-  runAll = (world: T) => {
+  runAll(world: T): void {
     if (this.run) {
       const ents = this.query(world);
       for (let i = 0; i < ents.length; i++) {
         this.run(world, ents[i]);
       }
     }
-  };
+  }
 }
 
-export class DrawSystemImpl<T extends ReadOnlyWorld = ReadOnlyWorld> extends SystemImpl<T> {
-  declare init?: (world: T, eid: number) => void;
-  declare cleanup?: (world: T, eid: number) => void;
-  declare destroy?: (world: T) => void;
-
-  declare run?: (world: T, eid: number) => void;
-
-  declare runAll: (world: T) => void;
-}
+export class DrawSystemImpl<T extends ReadOnlyWorld = ReadOnlyWorld> extends SystemImpl<T> {}
 
 const isDrawSystem = (system: typeof SystemImpl | typeof DrawSystemImpl): system is typeof DrawSystemImpl => {
   return system.prototype instanceof DrawSystemImpl;
