@@ -184,12 +184,17 @@ const proxyComponent = (world: World, entity: number, component: WorldComponent)
     },
     {
       set: (target: any, key, value) => {
+        if (!component.store[key as string]) {
+          return false;
+        }
         component.store[key as string][entity] = value;
         return true;
       },
       get: (target: any, key) => {
         if (key === "type") {
           return component.type;
+        } else if (!component.store[key as string]) {
+          return undefined;
         }
         return component.store[key as string][entity];
       },
