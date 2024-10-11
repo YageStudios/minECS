@@ -141,20 +141,24 @@ export type SerializedWorld = {
   }[];
 };
 
-export type WorldComponent = {
+type SchemaStore<T extends Schema> = {
+  [K in keyof T]: T[K][];
+} & Store;
+
+export type WorldComponent<T extends Schema = any> = {
   type: string;
   generationId: number;
   bitflag: number;
   queries: Query[];
-  store: any;
+  store: SchemaStore<T>;
   schema: typeof Schema;
   changedQueries: Set<Query>;
-  proxies: (Schema | null)[];
+  proxies: (T | null)[];
 };
 
 export interface World {
   <T extends Schema>(schema: Constructor<T>, eid: number): T;
-  <T extends Schema>(schema: Constructor<T>): WorldComponent;
+  <T extends Schema>(schema: Constructor<T>): WorldComponent<T>;
   entityCursor: number;
   componentSchemaStore: Map<Store, WorldComponent>;
   componentMap: Map<typeof Schema, WorldComponent>;
@@ -175,7 +179,7 @@ export interface World {
 
 export interface ReadOnlyWorld extends World {
   <T extends Schema>(schema: Constructor<T>, eid: number): Readonly<T>;
-  <T extends Schema>(schema: Constructor<T>): Readonly<WorldComponent>;
+  <T extends Schema>(schema: Constructor<T>): Readonly<WorldComponent<T>>;
 }
 
 export const isQuery = (query: any): query is Query => {
