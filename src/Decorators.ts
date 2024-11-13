@@ -123,6 +123,7 @@ export function type(
       } else {
         schema.setArrayType(key, "number");
       }
+      schema.setEntityFlag(key);
     } else if (Array.isArray(type)) {
       schema.setArrayType(key, type[0]);
     } else if (typeof type === "object" && type?.set) {

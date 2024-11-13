@@ -13,6 +13,7 @@ export class Schema {
   static readonly validate: any;
   static readonly index: number;
   static readonly id: number;
+  static readonly entityTypes: string[];
   static createStore: () => Store;
 
   constructor() {
@@ -63,6 +64,8 @@ export const generateSchema = (target: Schema) => {
   }
   constructor.schema.properties = constructor.schema.properties || {};
   constructor.schema.required = constructor.schema.required || [];
+  // @ts-ignore
+  constructor.entityTypes = constructor.entityTypes || [];
 
   return {
     setEnum: (propertyKey: string, enumToCheck: any) => {
@@ -95,6 +98,9 @@ export const generateSchema = (target: Schema) => {
       if (!constructor.schema.required.includes(key)) {
         constructor.schema.required.push(key);
       }
+    },
+    setEntityFlag: (key: string) => {
+      constructor.entityTypes.push(key);
     },
     setType: (key: string, type: string) => {
       const prevType = constructor.schema.properties[key]?.type;

@@ -53,6 +53,9 @@ class NestedComplex extends Schema {
 
   @type({ set: Complex })
   complexSet: Set<Complex>;
+
+  @type("EntityArray")
+  entities: number[];
 }
 
 const worldTestState = [
@@ -124,6 +127,7 @@ const worldTestState = [
           nullableString: null,
         },
       },
+      entities: [1],
     },
   ],
 ];
@@ -225,6 +229,8 @@ const runSystemTest = (serialization: SerialMode.BINARY | SerialMode.JSON) => ()
   stepWorld(cloneWorld);
   expect(cloneWorld(TestComponent, entity).x).toEqual(8);
   expect(cloneWorld(TestComponent, nextEntity).x).toEqual(7);
+
+  expect(NestedComplex.entityTypes).toEqual(["entities"]);
 };
 
 test("run system maintained for buffer", runSystemTest(SerialMode.BINARY));
