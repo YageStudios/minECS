@@ -16,10 +16,8 @@ export function Component(nameOrCategory?: string | number, category: number = 0
       }
     }
 
-    if (!cls.category) {
-      // @ts-ignore
-      cls.category = category;
-    }
+    // @ts-ignore
+    cls.category = category;
 
     if (componentStringSchema.has(name)) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
