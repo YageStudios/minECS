@@ -197,18 +197,22 @@ const deserializeEntityBuffer = (world: World, where: number, view: DataView) =>
         const array = prop[eid];
         // @ts-ignore
         const count = view[`get${array[$indexType]}`](where);
+        // @ts-ignore
         where += array[$indexBytes];
 
         // iterate over count
         for (let i = 0; i < count; i++) {
           // @ts-ignore
           const index = view[`get${array[$indexType]}`](where);
+          // @ts-ignore
           where += array[$indexBytes];
 
           const value =
             // @ts-ignore
             view[`get${array.constructor.name.replace("Array", "")}`](where);
+          // @ts-ignore
           where += array.BYTES_PER_ELEMENT;
+          // @ts-ignore
           prop[eid][index] = value;
         }
       } else {
@@ -270,35 +274,7 @@ const deserializeString = (where: number, view: DataView): [number, string] => {
   return [where, str];
 };
 
-// const deserializeStringArray = (where: number, view: DataView): [number, string[]] => {
-//   // view.setUint16(where, strings.length);
-//   // where += 2;
-//   // strings.forEach((s) => {
-//   //   where = serializeString(s, where, view);
-//   // });
-
-//   const length = view.getUint16(where);
-//   where += 2;
-//   const strings: string[] = [];
-//   for (let i = 0; i < length; i++) {
-//     let str = "";
-//     [where, str] = deserializeString(where, view);
-//     strings.push(str);
-//   }
-
-//   return [where, strings];
-// };
-
 const deserializeNumberObject = (where: number, view: DataView): [number, { [key: number]: number }] => {
-  // view.setUint16(where, Object.keys(obj).length);
-  // where += 2;
-  // Object.keys(obj).forEach((key) => {
-  //   const k = parseInt(key);
-  //   view.setUint32(where, k);
-  //   where += 4;
-  //   view.setFloat64(where, obj[k]);
-  //   where += 8;
-  // });
   const numObj: { [key: number]: number } = {};
 
   const length = view.getUint16(where);
@@ -589,6 +565,7 @@ export const deserializeWorld = (serializedWorld: SerializedWorld | ArrayBuffer 
     return world;
   } else if (typeof serializedWorld === "string") {
     const decodedBuffer = Base64.toUint8Array(serializedWorld).buffer;
+    // @ts-ignore
     deserializeFromBuffer(world, decodedBuffer);
     return world;
   } else {

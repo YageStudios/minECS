@@ -12,9 +12,10 @@ import { drawSystemRunList, systemManualList, systemRunList } from "./System";
 const removedReuseThreshold = 0.01;
 
 export const addEntity = (world: World) => {
+  const removed = world["removed"];
   const eid =
-    world["removed"].length > Math.round(world["size"] * removedReuseThreshold)
-      ? world["removed"].shift()!
+    removed.length > Math.round(world["size"] * removedReuseThreshold)
+      ? removed.pop()!
       : world.entityCursor++;
 
   if (eid > world["size"]) throw new Error("minECS - max entities reached");
@@ -31,16 +32,20 @@ export const removeEntity = (world: World, eid: number) => {
   // Remove entity from all queries
 
   const removeSystems: SystemImpl[] = [];
+  const systemQueryMap = world.systemQueryMap;
 
-  world.queries.forEach((q) => {
-    if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-      removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
+  for (const q of world.queries) {
+    if (queryRemoveEntity(world, q, eid)) {
+      const systems = systemQueryMap.get(q.queryKey);
+      if (systems) {
+        removeSystems.unshift(...systems);
+      }
     }
-  });
+  }
 
-  removeSystems.forEach((s) => {
-    s.cleanup?.(world, eid);
-  });
+  for (let i = 0; i < removeSystems.length; i++) {
+    removeSystems[i].cleanup?.(world, eid);
+  }
 
   // Free the entity
   world["removed"].push(eid);
@@ -49,7 +54,8 @@ export const removeEntity = (world: World, eid: number) => {
   world["entitySparseSet"].remove(eid);
 
   // Clear entity bitmasks
-  for (let i = 0; i < world["entityMasks"].length; i++) world["entityMasks"][i][eid] = 0;
+  const masks = world["entityMasks"];
+  for (let i = 0; i < masks.length; i++) masks[i][eid] = 0;
 };
 
 export const entityExists = (world: World, eid: number) => world["entitySparseSet"].has(eid);
@@ -74,48 +80,62 @@ export function addComponent<T>(
   // Add bitflag to entity bitmask
   world["entityMasks"][generationId][eid] |= bitflag;
 
-  // // Zero out each property value
+  // Zero out each property value
   if (reset !== false) {
     resetStoreFor(store, eid);
   }
   overrides = validateComponent(schema, eid, overrides ?? {}) as T;
-  Object.entries(overrides).forEach(([key, value]) => {
-    if (key !== "type") store[key][eid] = value;
-  });
+  const keys = Object.keys(overrides);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key !== "type") store[key][eid] = (overrides as any)[key];
+  }
 
+  const systemQueryMap = world.systemQueryMap;
   const removeSystems: SystemImpl[] = [];
 
-  queries.forEach((q) => {
+  for (let qi = 0; qi < queries.length; qi++) {
+    const q = queries[qi];
     // remove this entity from toRemove if it exists in this query
     q.toRemove.remove(eid);
     const match = queryCheckEntity(world, q, eid);
     if (match) {
-      if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        const systems = world.systemQueryMap.get(q.queryKey)!;
-        systems.forEach((system) => system.init?.(world, eid));
+      if (queryAddEntity(q, eid)) {
+        const systems = systemQueryMap.get(q.queryKey);
+        if (systems) {
+          for (let si = 0; si < systems.length; si++) {
+            systems[si].init?.(world, eid);
+          }
+        }
       }
     }
     if (!match) {
       q.entered.remove(eid);
 
-      if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
+      if (queryRemoveEntity(world, q, eid)) {
+        const systems = systemQueryMap.get(q.queryKey);
+        if (systems) {
+          removeSystems.unshift(...systems);
+        }
       }
     }
-  });
+  }
 
-  removeSystems.forEach((s) => {
-    s.cleanup?.(world, eid);
-  });
+  for (let i = 0; i < removeSystems.length; i++) {
+    removeSystems[i].cleanup?.(world, eid);
+  }
 }
 
 const validateComponent = (schema: typeof Schema, entity: number, overrides: { [key: string]: any }) => {
   overrides = overrides || {};
-  Object.entries(overrides).forEach(([key, value]) => {
+  const keys = Object.keys(overrides);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    const value = overrides[key];
     if (typeof value === "object" && value?.toJSON) {
       overrides[key] = value.toJSON();
     }
-  });
+  }
 
   if (!schema.validate(overrides)) {
     throw {
@@ -153,64 +173,92 @@ export const removeComponent = (world: World, component: typeof Schema, eid: num
   world["entityMasks"][generationId][eid] &= ~bitflag;
 
   const removeSystems: SystemImpl[] = [];
+  const systemQueryMap = world.systemQueryMap;
+
   // todo: archetype graph
-  queries.forEach((q) => {
+  for (let qi = 0; qi < queries.length; qi++) {
+    const q = queries[qi];
     // remove this entity from toRemove if it exists in this query
     q.toRemove.remove(eid);
     const match = queryCheckEntity(world, q, eid);
     if (match) {
-      if (queryAddEntity(q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        const systems = world.systemQueryMap.get(q.queryKey)!;
-        systems.forEach((system) => system.init?.(world, eid));
+      if (queryAddEntity(q, eid)) {
+        const systems = systemQueryMap.get(q.queryKey);
+        if (systems) {
+          for (let si = 0; si < systems.length; si++) {
+            systems[si].init?.(world, eid);
+          }
+        }
       }
     }
     if (!match) {
       q.entered.remove(eid);
-      if (queryRemoveEntity(world, q, eid) && world.systemQueryMap.has(q.queryKey)) {
-        removeSystems.unshift(...world.systemQueryMap.get(q.queryKey)!);
+      if (queryRemoveEntity(world, q, eid)) {
+        const systems = systemQueryMap.get(q.queryKey);
+        if (systems) {
+          removeSystems.unshift(...systems);
+        }
       }
     }
-  });
+  }
 
-  removeSystems.forEach((s) => {
-    s.cleanup?.(world, eid);
-  });
+  for (let i = 0; i < removeSystems.length; i++) {
+    removeSystems[i].cleanup?.(world, eid);
+  }
+};
+
+// Cache ownKeys per component type to avoid repeated Object.keys() calls
+const componentOwnKeysCache = new WeakMap<WorldComponent, string[]>();
+
+const getComponentOwnKeys = (component: WorldComponent): string[] => {
+  let keys = componentOwnKeysCache.get(component);
+  if (!keys) {
+    keys = Object.keys(component.store).concat(["type"]);
+    componentOwnKeysCache.set(component, keys);
+  }
+  return keys;
 };
 
 const proxyComponent = (world: World, entity: number, component: WorldComponent) => {
+  const store = component.store;
+  const type = component.type;
+
   component.proxies[entity] = new Proxy(
     {
-      type: component.type,
+      type,
     },
     {
       set: (target: any, key, value) => {
-        if (!component.store[key as string]) {
+        const arr = store[key as string];
+        if (!arr) {
           return false;
         }
-        component.store[key as string][entity] = value;
+        arr[entity] = value;
         return true;
       },
       get: (target: any, key) => {
         if (key === "type") {
-          return component.type;
-        } else if (!component.store[key as string]) {
+          return type;
+        }
+        const arr = store[key as string];
+        if (!arr) {
           return undefined;
         }
-        return component.store[key as string][entity];
+        return arr[entity];
       },
       ownKeys: () => {
-        return Object.keys(component.store).concat(["type"]);
+        return getComponentOwnKeys(component);
       },
       getOwnPropertyDescriptor: (target: any, key) => {
         if (key === "type") {
           return {
-            value: component.type,
+            value: type,
             writable: true,
             enumerable: true,
             configurable: true,
           };
         }
-        return Object.getOwnPropertyDescriptor(component.store, key);
+        return Object.getOwnPropertyDescriptor(store, key);
       },
     }
   );
@@ -407,18 +455,20 @@ export const getSystemsByType = <T extends typeof SystemImpl<any>>(world: World,
 
 export const stepWorld = (world: World) => {
   world.frame++;
-  systemRunList.forEach(([System]) => {
-    const system = getSystem(world, System);
+  for (let i = 0; i < systemRunList.length; i++) {
+    const system = getSystem(world, systemRunList[i][0]);
     if (system.query(world).length) {
       system.runAll(world);
     }
-  });
+  }
 };
 
 export const stepWorldDraw = (world: ReadOnlyWorld) => {
-  world.drawSystems.forEach((system) => {
+  const systems = world.drawSystems;
+  for (let i = 0; i < systems.length; i++) {
+    const system = systems[i];
     if (system.query(world).length) {
       system.runAll(world);
     }
-  });
+  }
 };

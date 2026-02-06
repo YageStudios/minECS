@@ -19,11 +19,11 @@ export const $subarrayTo = Symbol("subarrayTo");
 export const $parentArray = Symbol("parentArray");
 export const $tagStore = Symbol("tagStore");
 
-export const $queryShadow = Symbol("queryShadow");
+export const $queryShadow: unique symbol = Symbol("queryShadow");
 export const $serializeShadow = Symbol("serializeShadow");
 
-export const $indexType = Symbol("indexType");
-export const $indexBytes = Symbol("indexBytes");
+export const $indexType: unique symbol = Symbol("indexType");
+export const $indexBytes: unique symbol = Symbol("indexBytes");
 
 export const $isEidType = Symbol("isEidType");
 
@@ -164,13 +164,15 @@ export const resetStore = (store: Store) => {
 };
 
 export const resetStoreFor = (store: Store, eid: number) => {
-  if (store[$storeFlattened]) {
-    store[$storeFlattened].forEach((ta) => {
+  const flattened = store[$storeFlattened];
+  if (flattened) {
+    for (let i = 0; i < flattened.length; i++) {
+      const ta = flattened[i];
       if (ta._data) {
         delete ta._data[eid];
       } else if (ArrayBuffer.isView(ta)) (ta as any)[eid] = 0;
       else ta[eid].fill(0);
-    });
+    }
   }
 };
 
@@ -305,7 +307,7 @@ export const createStore = (schema: any, size: number): Store => {
   if (schema instanceof Object && Object.keys(schema).length) {
     const recursiveTransform = (a: any, k: any) => {
       if (typeof a[k] === "string") {
-        a[k] = createTypeStore(a[k], size);
+        a[k] = createTypeStore(a[k] as keyof typeof TYPES, size);
         a[k][$storeBase] = () => stores[$store];
         metadata[$storeFlattened].push(a[k]);
       } else if (isArrayType(a[k])) {

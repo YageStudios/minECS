@@ -23,5 +23,6 @@
     "experimentalDecorators": true,
     "strictPropertyInitialization": false
   },
-  "include": ["src", "vite.config.js", "./test/**/*.ts"]
+  "include": ["src", "vite.config.js", "./test/**/*.ts"],
+  "exclude": ["./test/**/benchmark.test.ts"]
 }

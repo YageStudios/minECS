@@ -268,7 +268,9 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
       // if property is an array
       if (ArrayBuffer.isView(prop[eid])) {
         const type = prop[eid].constructor.name.replace("Array", "");
+        // @ts-ignore
         const indexType = prop[eid][$indexType] as string;
+        // @ts-ignore
         const indexBytes = prop[eid][$indexBytes];
 
         // save space for count of dirty array elements
@@ -278,11 +280,14 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
         let arrayWriteCount = 0;
 
         // write index,value
+        // @ts-ignore
         for (let i = 0; i < prop[eid].length; i++) {
           if (shadow) {
+            // @ts-ignore
             const changed = shadow[eid][i] !== prop[eid][i];
 
             // sync shadow
+            // @ts-ignore
             shadow[eid][i] = prop[eid][i];
 
             // if state has not changed since the last call
@@ -300,9 +305,11 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
           where += indexBytes;
 
           // write value at that index
+          // @ts-ignore
           const value = prop[eid][i];
           // @ts-ignore
           view[`set${type}`](where, value);
+          // @ts-ignore
           where += prop[eid].BYTES_PER_ELEMENT;
           arrayWriteCount++;
         }
@@ -443,15 +450,6 @@ const serializeString = (str: string, where: number, view: DataView) => {
     view.setUint8(where, str.charCodeAt(i));
     where += 1;
   }
-  return where;
-};
-
-const serializeStringArray = (strings: string[], where: number, view: DataView) => {
-  view.setUint16(where, strings.length);
-  where += 2;
-  strings.forEach((s) => {
-    where = serializeString(s, where, view);
-  });
   return where;
 };
 
