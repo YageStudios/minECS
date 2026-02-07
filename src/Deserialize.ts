@@ -352,7 +352,7 @@ const deserializeQueryFromBuffer = (where: number, view: DataView): [number, Que
   return [where, query];
 };
 
-export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
+export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options?: { skipStoreReset?: boolean }) => {
   const view = new DataView(buffer);
 
   let where = 0;
@@ -363,6 +363,10 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
   if (version !== SERIALIZER_VERSION) {
     throw new Error(`Mismatched serializer version: ${version}, expected: ${SERIALIZER_VERSION}`);
   }
+
+  // read mode byte: 0 = full, 1 = delta
+  const mode = view.getUint8(where);
+  where += 1;
 
   let entitySparseSet: ReturnType<typeof SparseSet>;
   [where, entitySparseSet] = deserializeSparseSetFromBuffer(where, view);
@@ -386,10 +390,12 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
   where += 4;
   world.bitflag = bitflag;
 
-  world.entityMasks = [new Uint32Array(size)];
-  const maxGenerationId = Math.max(...Array.from(world.componentMap.values()).map((c) => c.generationId));
-  for (let i = 1; i <= maxGenerationId; i++) {
-    world.entityMasks.push(new Uint32Array(size));
+  if (!options?.skipStoreReset) {
+    world.entityMasks = [new Uint32Array(size)];
+    const maxGenerationId = Math.max(...Array.from(world.componentMap.values()).map((c) => c.generationId));
+    for (let i = 1; i <= maxGenerationId; i++) {
+      world.entityMasks.push(new Uint32Array(size));
+    }
   }
 
   const frame = view.getUint32(where);
@@ -426,7 +432,9 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
       booleanKeys: (schema as any).__booleanKeys || null,
     };
 
-    resetStore(component.store);
+    if (!options?.skipStoreReset) {
+      resetStore(component.store);
+    }
     worldComponentMap.set(schema, worldComponent);
   }
   world.componentMap = worldComponentMap;
@@ -573,4 +581,14 @@ export const deserializeWorld = (serializedWorld: SerializedWorld | ArrayBuffer 
   } else {
     return deserializeFromJSON(world, serializedWorld as SerializedWorld);
   }
+};
+
+export const applyDelta = (buffer: ArrayBuffer, world: World) => {
+  const view = new DataView(buffer);
+  // read mode byte after version (2 bytes)
+  const mode = view.getUint8(2);
+  if (mode !== 1) {
+    throw new Error(`applyDelta expects delta mode (1), got: ${mode}`);
+  }
+  deserializeFromBuffer(world, buffer, { skipStoreReset: true });
 };

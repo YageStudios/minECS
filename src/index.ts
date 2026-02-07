@@ -24,8 +24,8 @@ export {
 } from "./World";
 export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";
-export { serializeWorld } from "./Serialize";
-export { deserializeWorld } from "./Deserialize";
+export { serializeWorld, createDeltaSerializer } from "./Serialize";
+export { deserializeWorld, applyDelta } from "./Deserialize";
 
 export { System, SystemImpl, DrawSystemImpl } from "./System";
 

@@ -1,16 +1,26 @@
 import lodash from "lodash";
 import type { Schema } from "./Schema";
 import type { Store } from "./Storage";
-import { $indexBytes, $indexType, $storeBase, $storeFlattened, $tagStore } from "./Storage";
+import { $indexBytes, $indexType, $parentArray, $storeBase, $storeFlattened, $tagStore, createShadow } from "./Storage";
 import type { Query, SerializedQuery, SerializedWorld, World, WorldComponent } from "./Types";
 import { SerialMode } from "./Types";
 import type { SparseSet } from "./SparseSet";
 import { Base64 } from "js-base64";
 import { getComponentSchema, hasComponent } from "./World";
 
-const { cloneDeep } = lodash;
+const { cloneDeep, isEqual } = lodash;
 
-export const SERIALIZER_VERSION = 1;
+type DeltaShadow =
+  | { kind: "subarray"; symbol: symbol }
+  | { kind: "typed"; symbol: symbol }
+  | { kind: "faux"; values: Map<number, any> };
+
+type DeltaState = {
+  changedProps: Map<any, DeltaShadow>;
+  storeEntityCache: Map<any, Set<number>>;
+};
+
+export const SERIALIZER_VERSION = 2;
 
 function replacer(key: string, value: any) {
   if (value instanceof Map) {
@@ -30,6 +40,21 @@ function replacer(key: string, value: any) {
 
 export const UNDEFINED_FLAG = 255;
 export const NULL_FLAG = 254;
+
+const isPrimitiveValue = (value: any): boolean => {
+  return value === null || (typeof value !== "object" && typeof value !== "function");
+};
+
+const cloneShadowValue = (value: any): any => {
+  return isPrimitiveValue(value) ? value : cloneDeep(value);
+};
+
+const shadowValuesEqual = (a: any, b: any): boolean => {
+  if (isPrimitiveValue(a) && isPrimitiveValue(b)) {
+    return Object.is(a, b);
+  }
+  return isEqual(a, b);
+};
 
 const serializeValue = (
   where: number,
@@ -179,12 +204,12 @@ const serialzeProp = (
   return [where, propComplexData];
 };
 
-const serializeEntities = (world: World, where: number, view: DataView): number => {
+const serializeEntities = (world: World, where: number, view: DataView, deltaState?: DeltaState): number => {
   const worldSerializer = true;
 
-  const changedProps = new Map();
+  const changedProps = deltaState ? deltaState.changedProps : new Map<any, DeltaShadow>();
   let componentProps = [] as Store[];
-  const entityComponentCache = new Map() as Map<number, Set<any>>;
+  const storeEntityCache = deltaState ? deltaState.storeEntityCache : null;
 
   const complexEntityData: any = {};
   if (worldSerializer) {
@@ -200,7 +225,8 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
 
   const ents = world["entitySparseSet"].dense;
 
-  const cache = new Map();
+  const storeEntityListCache = new Map<any, number[]>();
+  const storeNewlyAddedCache = deltaState ? new Map<any, Set<number>>() : null;
 
   // iterate over component props
   for (let pid = 0; pid < componentProps.length; pid++) {
@@ -208,10 +234,40 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
     const store = prop[$storeBase]();
     const component = getComponentSchema(world, store);
     const schema = component.schema;
-    const $diff = changedProps.get(prop);
-    const shadow = $diff ? prop[$diff] : null;
+    const componentMasks = world["entityMasks"][component.generationId];
+    const componentBitflag = component.bitflag;
+    const deltaShadow = changedProps.get(prop);
+    // @ts-ignore
+    const shadow = deltaShadow && "symbol" in deltaShadow ? prop[deltaShadow.symbol] : null;
 
-    if (!cache.has(store)) cache.set(store, new Map());
+    let storeEntities = storeEntityListCache.get(store);
+    if (!storeEntities) {
+      storeEntities = [];
+      for (let i = 0; i < ents.length; i++) {
+        const eid = ents[i];
+        if ((componentMasks[eid] & componentBitflag) === componentBitflag) {
+          storeEntities.push(eid);
+        }
+      }
+      storeEntityListCache.set(store, storeEntities);
+
+      if (storeEntityCache && storeNewlyAddedCache) {
+        const prevMembers = storeEntityCache.get(store) || new Set<number>();
+        const nextMembers = new Set<number>();
+        const newlyAdded = new Set<number>();
+
+        for (let i = 0; i < storeEntities.length; i++) {
+          const eid = storeEntities[i];
+          nextMembers.add(eid);
+          if (!prevMembers.has(eid)) {
+            newlyAdded.add(eid);
+          }
+        }
+
+        storeEntityCache.set(store, nextMembers);
+        storeNewlyAddedCache.set(store, newlyAdded);
+      }
+    }
 
     // write pid
     view.setUint16(where, pid);
@@ -223,36 +279,12 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
 
     let writeCount = 0;
 
+    const storeNewlyAdded = storeNewlyAddedCache ? storeNewlyAddedCache.get(store) : null;
+
     // write eid,val
-    for (let i = 0; i < ents.length; i++) {
-      const eid = ents[i];
-
-      let componentCache = entityComponentCache.get(eid);
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      if (!componentCache) componentCache = entityComponentCache.set(eid, new Set()).get(eid)!;
-
-      componentCache.add(eid);
-
-      const newlyAddedComponent =
-        // if we are diffing
-        (shadow &&
-          // and we have already iterated over this component for this entity
-          // retrieve cached value
-          cache.get(store).get(eid)) ||
-        // or if entity did not have component last call
-        (!componentCache.has(store) &&
-          // and entity has component this call
-          hasComponent(world, schema, eid));
-
-      cache.get(store).set(eid, newlyAddedComponent);
-
-      if (newlyAddedComponent) {
-        componentCache.add(store);
-      } else if (!hasComponent(world, schema, eid)) {
-        // skip if entity doesn't have this component
-        componentCache.delete(store);
-        continue;
-      }
+    for (let i = 0; i < storeEntities.length; i++) {
+      const eid = storeEntities[i];
+      const newlyAddedComponent = storeNewlyAdded ? storeNewlyAdded.has(eid) : false;
       const rewindWhere = where;
 
       // write eid
@@ -261,6 +293,10 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
 
       // if it's a tag store we can stop here
       if (prop[$tagStore]) {
+        if (deltaState && !newlyAddedComponent) {
+          where = rewindWhere;
+          continue;
+        }
         writeCount++;
         continue;
       }
@@ -324,6 +360,27 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
           continue;
         }
       } else {
+        if (deltaShadow && !newlyAddedComponent) {
+          if (deltaShadow.kind === "typed") {
+            // @ts-ignore
+            const typedShadow = prop[deltaShadow.symbol];
+            const changed = !Object.is(typedShadow[eid], prop[eid]);
+            typedShadow[eid] = prop[eid];
+            if (!changed) {
+              where = rewindWhere;
+              continue;
+            }
+          } else if (deltaShadow.kind === "faux") {
+            const previous = deltaShadow.values.get(eid);
+            const current = prop[eid];
+            if (shadowValuesEqual(previous, current)) {
+              where = rewindWhere;
+              continue;
+            }
+            deltaShadow.values.set(eid, cloneShadowValue(current));
+          }
+        }
+
         const type = prop.constructor.name.replace("Array", "");
 
         let propComplexData: any = null;
@@ -336,6 +393,15 @@ const serializeEntities = (world: World, where: number, view: DataView): number 
             propComplexData[(prop as any)._key],
             replacer
           );
+        }
+
+        if (deltaShadow && newlyAddedComponent) {
+          if (deltaShadow.kind === "typed") {
+            // @ts-ignore
+            prop[deltaShadow.symbol][eid] = prop[eid];
+          } else if (deltaShadow.kind === "faux") {
+            deltaShadow.values.set(eid, cloneShadowValue(prop[eid]));
+          }
         }
 
         writeCount++;
@@ -498,7 +564,7 @@ const serializeQueryToBuffer = (query: Query, where: number, view: DataView) => 
   return where;
 };
 
-const serializeWorldToBuffer = (world: World, maxBytes = 20000000) => {
+const serializeWorldToBuffer = (world: World, maxBytes = 20000000, deltaState?: DeltaState, mode: number = 0) => {
   const buffer = new ArrayBuffer(maxBytes);
   const view = new DataView(buffer);
 
@@ -506,6 +572,10 @@ const serializeWorldToBuffer = (world: World, maxBytes = 20000000) => {
 
   view.setUint16(where, SERIALIZER_VERSION);
   where += 2;
+
+  // mode byte: 0 = full, 1 = delta
+  view.setUint8(where, mode);
+  where += 1;
 
   if (!world.entitySparseSet.dense.length) return buffer.slice(0, where);
 
@@ -549,7 +619,7 @@ const serializeWorldToBuffer = (world: World, maxBytes = 20000000) => {
     }
   });
 
-  where = serializeEntities(world, where, view);
+  where = serializeEntities(world, where, view, deltaState);
 
   return buffer.slice(0, where);
 };
@@ -602,3 +672,49 @@ export function serializeWorld(serializationType: SerialMode, world: World): Ser
     return base64Buffer;
   }
 }
+
+export const createDeltaSerializer = (world: World) => {
+  let initialized = false;
+  const changedProps = new Map<any, DeltaShadow>();
+  const storeEntityCache = new Map<any, Set<number>>();
+
+  const initShadows = () => {
+    changedProps.clear();
+    storeEntityCache.clear();
+    world.componentMap.forEach((c) => {
+      const flattened = c.store[$storeFlattened];
+      for (let i = 0; i < flattened.length; i++) {
+        const prop = flattened[i];
+        // @ts-ignore
+        if (Array.isArray(prop) && prop[$parentArray]) {
+          const sym = Symbol("deltaShadow");
+          createShadow(prop as unknown as import("./Storage").Store, sym);
+          changedProps.set(prop, { kind: "subarray", symbol: sym });
+        } else if (ArrayBuffer.isView(prop)) {
+          const sym = Symbol("deltaShadow");
+          createShadow(prop as unknown as import("./Storage").Store, sym);
+          changedProps.set(prop, { kind: "typed", symbol: sym });
+        } else {
+          changedProps.set(prop, { kind: "faux", values: new Map<number, any>() });
+        }
+      }
+    });
+    initialized = true;
+  };
+
+  const serialize = (maxBytes = 20000000): ArrayBuffer => {
+    if (!initialized) {
+      initShadows();
+      // First call: full serialization (mode 0) but with shadows active so they get synced
+      return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache }, 0);
+    }
+    // Subsequent calls: delta serialization (mode 1)
+    return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache }, 1);
+  };
+
+  const reset = () => {
+    initialized = false;
+  };
+
+  return { serialize, reset };
+};

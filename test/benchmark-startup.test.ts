@@ -1,108 +1,10 @@
 import { describe, test, expect } from "vitest";
-import { Component, defaultValue, type } from "../src/Decorators";
 import { createWorld, addEntity, addComponent, sortComponentQueries } from "../src/World";
 import { Schema } from "../src/Schema";
-import { createStore } from "../src/Storage";
 import { freezeComponentOrder, componentList } from "../src/Component";
 import * as fs from "fs";
 import * as path from "path";
-
-// ============================================================
-// Generate 350+ components programmatically
-// ============================================================
-
-const allComponents: (typeof Schema)[] = [];
-
-function makeComponent(name: string, setup: (proto: any) => void) {
-  class C extends Schema {}
-  setup(C.prototype);
-  Component(name)(C as any);
-  allComponents.push(C as any);
-  return C;
-}
-
-// 100 components: 2-3 number properties (transforms, physics, velocities)
-for (let i = 0; i < 100; i++) {
-  makeComponent(`Num2_${i}`, (proto) => {
-    type("number")(proto, "a");
-    defaultValue(0)(proto, "a");
-    type("number")(proto, "b");
-    defaultValue(0)(proto, "b");
-    if (i % 3 === 0) {
-      type("number")(proto, "c");
-      defaultValue(0)(proto, "c");
-    }
-  });
-}
-
-// 60 components: 4-6 number properties (stats, configs)
-for (let i = 0; i < 60; i++) {
-  makeComponent(`Num5_${i}`, (proto) => {
-    type("number")(proto, "v1");
-    defaultValue(0)(proto, "v1");
-    type("number")(proto, "v2");
-    defaultValue(0)(proto, "v2");
-    type("number")(proto, "v3");
-    defaultValue(0)(proto, "v3");
-    type("number")(proto, "v4");
-    defaultValue(0)(proto, "v4");
-    if (i % 2 === 0) {
-      type("number")(proto, "v5");
-      defaultValue(0)(proto, "v5");
-      type("number")(proto, "v6");
-      defaultValue(0)(proto, "v6");
-    }
-  });
-}
-
-// 40 components: mixed string + number + boolean
-for (let i = 0; i < 40; i++) {
-  makeComponent(`Mixed_${i}`, (proto) => {
-    type("string")(proto, "name");
-    defaultValue("")(proto, "name");
-    type("number")(proto, "val");
-    defaultValue(0)(proto, "val");
-    type("boolean")(proto, "active");
-    defaultValue(false)(proto, "active");
-  });
-}
-
-// 50 tag components (no properties)
-for (let i = 0; i < 50; i++) {
-  makeComponent(`Tag_${i}`, () => {});
-}
-
-// 30 components: typed numbers (float32, int32, uint16, etc.)
-for (let i = 0; i < 30; i++) {
-  const types = ["float32", "int32", "uint16", "int8", "float64"] as const;
-  const t = types[i % types.length];
-  makeComponent(`Typed_${i}`, (proto) => {
-    type(t)(proto, "x");
-    defaultValue(0)(proto, "x");
-    type(t)(proto, "y");
-    defaultValue(0)(proto, "y");
-  });
-}
-
-// 40 components: number + string pairs (labels, metadata)
-for (let i = 0; i < 40; i++) {
-  makeComponent(`Meta_${i}`, (proto) => {
-    type("number")(proto, "id");
-    defaultValue(0)(proto, "id");
-    type("string")(proto, "label");
-    defaultValue("")(proto, "label");
-  });
-}
-
-// 30 components: heavier (8-10 number properties)
-for (let i = 0; i < 30; i++) {
-  makeComponent(`Heavy_${i}`, (proto) => {
-    for (let j = 0; j < 8 + (i % 3); j++) {
-      type("number")(proto, `p${j}`);
-      defaultValue(0)(proto, `p${j}`);
-    }
-  });
-}
+import { benchmark350Components, benchmark350Count } from "./helpers/benchmark350Components";
 
 // ============================================================
 // Benchmark
@@ -125,36 +27,36 @@ function benchOnce(name: string, fn: () => void, details?: string) {
   return result;
 }
 
-describe(`Startup Benchmark (${allComponents.length} components)`, () => {
+describe(`Startup Benchmark (${benchmark350Count} components)`, () => {
   test("component count", () => {
-    expect(allComponents.length).toBeGreaterThanOrEqual(350);
+    expect(benchmark350Count).toBeGreaterThanOrEqual(350);
   });
 
   test("createWorld (default size=1000)", () => {
     const r = benchOnce("createWorld default (1k)", () => {
       createWorld();
-    }, `${allComponents.length} components, size=1000`);
+    }, `${benchmark350Count} components, size=1000`);
     expect(r.totalMs).toBeDefined();
   });
 
   test("createWorld (size=10000)", () => {
     const r = benchOnce("createWorld 10k", () => {
       createWorld(10000);
-    }, `${allComponents.length} components, size=10000`);
+    }, `${benchmark350Count} components, size=10000`);
     expect(r.totalMs).toBeDefined();
   });
 
   test("createWorld (size=50000)", () => {
     const r = benchOnce("createWorld 50k", () => {
       createWorld(50000);
-    }, `${allComponents.length} components, size=50000`);
+    }, `${benchmark350Count} components, size=50000`);
     expect(r.totalMs).toBeDefined();
   });
 
   test("createWorld + 1000 entities + 3 components each", () => {
-    const c0 = allComponents[0];
-    const c1 = allComponents[1];
-    const c2 = allComponents[100];
+    const c0 = benchmark350Components[0];
+    const c1 = benchmark350Components[1];
+    const c2 = benchmark350Components[100];
     const r = benchOnce("createWorld + populate 1k ents", () => {
       const world = createWorld(5000);
       for (let i = 0; i < 1000; i++) {
@@ -163,7 +65,7 @@ describe(`Startup Benchmark (${allComponents.length} components)`, () => {
         addComponent(world, c1, eid);
         addComponent(world, c2, eid);
       }
-    }, `${allComponents.length} components registered, 3 added per entity`);
+    }, `${benchmark350Count} components registered, 3 added per entity`);
     expect(r.totalMs).toBeDefined();
   });
 
@@ -317,7 +219,7 @@ describe(`Startup Benchmark (${allComponents.length} components)`, () => {
   test("Write results", () => {
     const lines = [
       "=".repeat(70),
-      `  Startup Benchmark (${allComponents.length} components)`,
+      `  Startup Benchmark (${benchmark350Count} components)`,
       "=".repeat(70),
       "",
     ];

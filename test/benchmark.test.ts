@@ -12,8 +12,8 @@ import {
 } from "../src/World";
 import { Schema } from "../src/Schema";
 import { defineQuery } from "../src/Query";
-import { serializeWorld } from "../src/Serialize";
-import { deserializeWorld } from "../src/Deserialize";
+import { serializeWorld, createDeltaSerializer } from "../src/Serialize";
+import { deserializeWorld, applyDelta } from "../src/Deserialize";
 import { SystemImpl, System } from "../src/System";
 import { SerialMode } from "../src/Types";
 import type { World } from "../src/Types";
@@ -75,6 +75,12 @@ class BenchData extends Schema {
   active: boolean;
 }
 
+@Component()
+class BenchDeltaVector extends Schema {
+  @type(["float32", 8])
+  samples: Float32Array;
+}
+
 // ============================================================
 // System Definitions
 // ============================================================
@@ -110,11 +116,26 @@ interface BenchmarkResult {
   avgMs: number;
   opsPerSec: number;
   details?: string;
+  bytes?: number;
+  comparisonGroup?: string;
+  comparisonVariant?: "no-delta" | "delta";
 }
 
 const results: BenchmarkResult[] = [];
 
-function bench(name: string, iterations: number, fn: () => void, details?: string): BenchmarkResult {
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
+}
+
+function bench(
+  name: string,
+  iterations: number,
+  fn: () => void,
+  details?: string,
+  metrics?: Pick<BenchmarkResult, "bytes" | "comparisonGroup" | "comparisonVariant">
+): BenchmarkResult {
   // Warmup
   for (let i = 0; i < Math.min(iterations, 100); i++) {
     fn();
@@ -137,13 +158,19 @@ function bench(name: string, iterations: number, fn: () => void, details?: strin
     avgMs: Math.round(avgMs * 10000) / 10000,
     opsPerSec: Math.round(opsPerSec),
     details,
+    ...metrics,
   };
 
   results.push(result);
   return result;
 }
 
-function benchOnce(name: string, fn: () => void, details?: string): BenchmarkResult {
+function benchOnce(
+  name: string,
+  fn: () => void,
+  details?: string,
+  metrics?: Pick<BenchmarkResult, "bytes" | "comparisonGroup" | "comparisonVariant">
+): BenchmarkResult {
   // no warmup for single-run benchmarks
   const start = performance.now();
   fn();
@@ -158,6 +185,7 @@ function benchOnce(name: string, fn: () => void, details?: string): BenchmarkRes
     avgMs: Math.round(totalMs * 1000) / 1000,
     opsPerSec: Math.round((1 / totalMs) * 1000),
     details,
+    ...metrics,
   };
 
   results.push(result);
@@ -166,6 +194,10 @@ function benchOnce(name: string, fn: () => void, details?: string): BenchmarkRes
 
 function formatResults(resultsList: BenchmarkResult[]): string {
   const lines: string[] = [];
+  const comparisonGroups = new Map<
+    string,
+    { noDeltaMs: number; deltaMs: number; noDeltaBytes: number; deltaBytes: number }
+  >();
   lines.push("=".repeat(90));
   lines.push("  minECS Performance Benchmark Results");
   lines.push("  Date: " + new Date().toISOString());
@@ -187,18 +219,103 @@ function formatResults(resultsList: BenchmarkResult[]): string {
     const totalStr = `${r.totalMs.toFixed(3)}ms`.padStart(12);
     const avgStr = `${r.avgMs.toFixed(4)}ms/op`.padStart(16);
     const opsStr = `${r.opsPerSec.toLocaleString()} ops/s`.padStart(18);
-    lines.push(`  ${nameStr}${totalStr}${avgStr}${opsStr}`);
+    const sizeStr = (r.bytes !== undefined ? formatBytes(r.bytes) : "-").padStart(12);
+    lines.push(`  ${nameStr}${totalStr}${avgStr}${opsStr}${sizeStr}`);
     if (r.details) {
       lines.push(`    -> ${r.details}`);
     }
+
+    if (r.comparisonGroup && r.comparisonVariant) {
+      const group = comparisonGroups.get(r.comparisonGroup) || {
+        noDeltaMs: 0,
+        deltaMs: 0,
+        noDeltaBytes: 0,
+        deltaBytes: 0,
+      };
+      if (r.comparisonVariant === "no-delta") {
+        group.noDeltaMs += r.totalMs;
+        group.noDeltaBytes += r.bytes || 0;
+      } else {
+        group.deltaMs += r.totalMs;
+        group.deltaBytes += r.bytes || 0;
+      }
+      comparisonGroups.set(r.comparisonGroup, group);
+    }
   }
+
+  const totalMs = resultsList.reduce((sum, r) => sum + r.totalMs, 0);
 
   lines.push("");
   lines.push("=".repeat(90));
   lines.push(`  Total benchmarks: ${resultsList.length}`);
+  lines.push(`  Total benchmark time: ${totalMs.toFixed(3)}ms`);
+
+  if (comparisonGroups.size) {
+    lines.push("-".repeat(90));
+    lines.push("  Delta Comparison Totals");
+    lines.push("-".repeat(90));
+
+    let allNoDeltaMs = 0;
+    let allDeltaMs = 0;
+    let allNoDeltaBytes = 0;
+    let allDeltaBytes = 0;
+
+    for (const [groupName, group] of comparisonGroups.entries()) {
+      allNoDeltaMs += group.noDeltaMs;
+      allDeltaMs += group.deltaMs;
+      allNoDeltaBytes += group.noDeltaBytes;
+      allDeltaBytes += group.deltaBytes;
+
+      const timeDiffPct =
+        group.noDeltaMs > 0 ? (((group.deltaMs - group.noDeltaMs) / group.noDeltaMs) * 100).toFixed(1) : "n/a";
+      const sizeDiffPct =
+        group.noDeltaBytes > 0
+          ? (((group.deltaBytes - group.noDeltaBytes) / group.noDeltaBytes) * 100).toFixed(1)
+          : "n/a";
+
+      lines.push(
+        `  ${groupName}: no-delta ${group.noDeltaMs.toFixed(3)}ms (${formatBytes(group.noDeltaBytes)}), ` +
+          `delta ${group.deltaMs.toFixed(3)}ms (${formatBytes(group.deltaBytes)}), diff ${timeDiffPct}% time, ${sizeDiffPct}% size`
+      );
+    }
+
+    const allTimeDiffPct =
+      allNoDeltaMs > 0 ? (((allDeltaMs - allNoDeltaMs) / allNoDeltaMs) * 100).toFixed(1) : "n/a";
+    const allSizeDiffPct =
+      allNoDeltaBytes > 0 ? (((allDeltaBytes - allNoDeltaBytes) / allNoDeltaBytes) * 100).toFixed(1) : "n/a";
+
+    lines.push(
+      `  TOTAL: no-delta ${allNoDeltaMs.toFixed(3)}ms (${formatBytes(allNoDeltaBytes)}), ` +
+        `delta ${allDeltaMs.toFixed(3)}ms (${formatBytes(allDeltaBytes)}), diff ${allTimeDiffPct}% time, ${allSizeDiffPct}% size`
+    );
+  }
+
   lines.push("=".repeat(90));
 
   return lines.join("\n");
+}
+
+function createDeltaBenchmarkWorld(entityCount = 1000): { world: World; eids: number[] } {
+  const world = createWorld(entityCount * 2);
+  const eids: number[] = [];
+
+  for (let i = 0; i < entityCount; i++) {
+    const eid = addEntity(world);
+    addComponent(world, BenchPosition, eid, { x: i, y: i * 2 });
+    addComponent(world, BenchVelocity, eid, { vx: 1, vy: -1 });
+    addComponent(world, BenchDeltaVector, eid, { samples: Array.from({ length: 8 }, (_, j) => i + j) });
+    eids.push(eid);
+  }
+
+  return { world, eids };
+}
+
+function mutateDeltaVectors(world: World, eids: number[], tick: number): void {
+  for (let i = 0; i < eids.length; i += 10) {
+    const samples = world(BenchDeltaVector, eids[i]).samples;
+    const index = (tick + i) % samples.length;
+    samples[index] = samples[index] + 1;
+  }
 }
 
 // ============================================================
@@ -562,6 +679,36 @@ describe("Performance Benchmarks", () => {
         serializeWorld(SerialMode.BINARY, world);
       }, "Larger binary serialization");
     });
+
+    test("Serialize: Binary 1,000 entities (no delta vs delta, size)", () => {
+      const { world, eids } = createDeltaBenchmarkWorld(1000);
+
+      const fullBuffer = serializeWorld(SerialMode.BINARY, world);
+      bench("Serialize: Binary 1,000 ents [No Delta + size]", 10, () => {
+        serializeWorld(SerialMode.BINARY, world);
+      }, `Payload ${formatBytes(fullBuffer.byteLength)}`, {
+        bytes: fullBuffer.byteLength,
+        comparisonGroup: "Serialize Binary 1k",
+        comparisonVariant: "no-delta",
+      });
+
+      const deltaSerializer = createDeltaSerializer(world);
+      deltaSerializer.serialize(); // initialize shadows + baseline
+      let tick = 0;
+      mutateDeltaVectors(world, eids, ++tick);
+      const deltaBuffer = deltaSerializer.serialize();
+
+      bench("Serialize: Binary 1,000 ents [Delta + size]", 10, () => {
+        mutateDeltaVectors(world, eids, ++tick);
+        deltaSerializer.serialize();
+      }, `Payload ${formatBytes(deltaBuffer.byteLength)}`, {
+        bytes: deltaBuffer.byteLength,
+        comparisonGroup: "Serialize Binary 1k",
+        comparisonVariant: "delta",
+      });
+
+      expect(deltaBuffer.byteLength).toBeLessThan(fullBuffer.byteLength);
+    });
   });
 
   // ----------------------------------------------------------
@@ -581,6 +728,37 @@ describe("Performance Benchmarks", () => {
         const newWorld = createWorld(5000);
         deserializeWorld(buffer, newWorld);
       }, "Full world binary deserialization");
+    });
+
+    test("Deserialize: Binary 1,000 entities (no delta vs delta apply, size)", () => {
+      const { world, eids } = createDeltaBenchmarkWorld(1000);
+      const fullBuffer = serializeWorld(SerialMode.BINARY, world);
+
+      const deltaSerializer = createDeltaSerializer(world);
+      deltaSerializer.serialize(); // initialize shadows + baseline
+      mutateDeltaVectors(world, eids, 1);
+      const deltaBuffer = deltaSerializer.serialize();
+
+      bench("Deserialize: Binary 1,000 ents [No Delta + size]", 10, () => {
+        const newWorld = createWorld(5000);
+        deserializeWorld(fullBuffer, newWorld);
+      }, `Payload ${formatBytes(fullBuffer.byteLength)}`, {
+        bytes: fullBuffer.byteLength,
+        comparisonGroup: "Deserialize Binary 1k",
+        comparisonVariant: "no-delta",
+      });
+
+      const targetWorld = createWorld(5000);
+      deserializeWorld(fullBuffer, targetWorld);
+      bench("Deserialize: Delta apply 1,000 ents [Delta + size]", 50, () => {
+        applyDelta(deltaBuffer, targetWorld);
+      }, `Payload ${formatBytes(deltaBuffer.byteLength)}`, {
+        bytes: deltaBuffer.byteLength,
+        comparisonGroup: "Deserialize Binary 1k",
+        comparisonVariant: "delta",
+      });
+
+      expect(deltaBuffer.byteLength).toBeLessThan(fullBuffer.byteLength);
     });
   });
 

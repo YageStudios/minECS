@@ -10,8 +10,8 @@ import {
   removeComponent,
   hasComponent,
 } from "../src/World";
-import { serializeWorld } from "../src/Serialize";
-import { deserializeWorld } from "../src/Deserialize";
+import { serializeWorld, createDeltaSerializer } from "../src/Serialize";
+import { deserializeWorld, applyDelta } from "../src/Deserialize";
 import { SerialMode } from "../src/Types";
 import { defineQuery } from "../src/Query";
 
@@ -539,5 +539,145 @@ describe("Typed subarray binary serialization", () => {
     expect(world(Velocity, eid).xyz[0]).toBeCloseTo(1);
     expect(world(Velocity, eid).xyz[1]).toBeCloseTo(2);
     expect(world(Velocity, eid).xyz[2]).toBeCloseTo(3);
+  });
+});
+
+describe("Delta serialization", () => {
+  test("first call produces full data that round-trips correctly", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [1.5, -2.25, 3.0] });
+
+    const delta = createDeltaSerializer(world);
+    const buffer = delta.serialize();
+
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    const vel = clone(Velocity, eid).xyz;
+    expect(vel[0]).toBe(1.5);
+    expect(vel[1]).toBe(-2.25);
+    expect(vel[2]).toBe(3);
+  });
+
+  test("no-change produces smaller buffer than initial", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [1.0, 2.0, 3.0] });
+
+    const delta = createDeltaSerializer(world);
+    const firstBuffer = delta.serialize();
+    const secondBuffer = delta.serialize();
+
+    expect(secondBuffer.byteLength).toBeLessThan(firstBuffer.byteLength);
+  });
+
+  test("no-change tag component produces smaller buffer than initial", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, STag, eid);
+
+    const delta = createDeltaSerializer(world);
+    const firstBuffer = delta.serialize();
+    const secondBuffer = delta.serialize();
+
+    expect(secondBuffer.byteLength).toBeLessThan(firstBuffer.byteLength);
+  });
+
+  test("scalar typed property delta only sends changed fields", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, SPos, eid, { x: 10, y: 20 });
+
+    const delta = createDeltaSerializer(world);
+    const fullBuffer = delta.serialize();
+
+    const clone = createWorld();
+    deserializeWorld(fullBuffer, clone);
+
+    world(SPos, eid).x = 55;
+    const deltaBuffer = delta.serialize();
+    expect(deltaBuffer.byteLength).toBeLessThan(fullBuffer.byteLength);
+
+    applyDelta(deltaBuffer, clone);
+    expect(clone(SPos, eid).x).toBe(55);
+    expect(clone(SPos, eid).y).toBe(20);
+  });
+
+  test("single element mutation only serializes that element", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [1.0, 2.0, 3.0] });
+
+    const delta = createDeltaSerializer(world);
+    const fullBuffer = delta.serialize();
+
+    // set up clone from the full initial state
+    const clone = createWorld();
+    deserializeWorld(fullBuffer, clone);
+
+    // mutate only one element
+    world(Velocity, eid).xyz[1] = 99.0;
+    const deltaBuffer = delta.serialize();
+
+    applyDelta(deltaBuffer, clone);
+
+    const vel = clone(Velocity, eid).xyz;
+    expect(vel[0]).toBe(1);
+    expect(vel[1]).toBe(99);
+    expect(vel[2]).toBe(3);
+  });
+
+  test("multiple entities where only one changes", () => {
+    const world = createWorld();
+    const e1 = addEntity(world);
+    const e2 = addEntity(world);
+    addComponent(world, Velocity, e1, { xyz: [10, 20, 30] });
+    addComponent(world, Velocity, e2, { xyz: [40, 50, 60] });
+
+    const delta = createDeltaSerializer(world);
+    const fullBuffer = delta.serialize();
+
+    // set up clone from the full initial state
+    const clone = createWorld();
+    deserializeWorld(fullBuffer, clone);
+
+    // only change e2
+    world(Velocity, e2).xyz[0] = 999;
+    const deltaBuffer = delta.serialize();
+
+    // delta should be smaller since e1 is unchanged
+    expect(deltaBuffer.byteLength).toBeLessThan(fullBuffer.byteLength);
+
+    applyDelta(deltaBuffer, clone);
+
+    expect(clone(Velocity, e1).xyz[0]).toBe(10);
+    expect(clone(Velocity, e1).xyz[1]).toBe(20);
+    expect(clone(Velocity, e2).xyz[0]).toBe(999);
+    expect(clone(Velocity, e2).xyz[1]).toBe(50);
+  });
+
+  test("reset() re-initializes shadows", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [1.0, 2.0, 3.0] });
+
+    const delta = createDeltaSerializer(world);
+    delta.serialize(); // initial
+
+    // no changes, so delta should be small
+    const smallBuffer = delta.serialize();
+
+    // reset and serialize again - should be full-sized
+    delta.reset();
+    const resetBuffer = delta.serialize();
+
+    expect(resetBuffer.byteLength).toBeGreaterThan(smallBuffer.byteLength);
+
+    // should still round-trip correctly
+    const clone = createWorld();
+    deserializeWorld(resetBuffer, clone);
+    expect(clone(Velocity, eid).xyz[0]).toBe(1);
+    expect(clone(Velocity, eid).xyz[2]).toBe(3);
   });
 });
