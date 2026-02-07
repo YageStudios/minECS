@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import type { Store } from "./Storage";
-import { free, resetStoreFor } from "./Storage";
+import { $storeFlattened, free, resetStoreFor } from "./Storage";
 import type { Constructor, Query, ReadOnlyWorld, World, WorldComponent } from "./Types";
 import { SparseSet } from "./SparseSet";
 import type { Schema } from "./Schema";
@@ -8,6 +8,7 @@ import { componentList, freezeComponentOrder } from "./Component";
 import { queryRemoveEntity, queryCheckEntity, queryAddEntity, defineQuery } from "./Query";
 import type { SystemImpl } from "./System";
 import { drawSystemRunList, systemManualList, systemRunList } from "./System";
+import { $deltaDirtyState, markDeltaDirty } from "./DeltaTracking";
 
 const removedReuseThreshold = 0.01;
 
@@ -80,6 +81,7 @@ export function addComponent<T>(
 
   const c = world["componentMap"].get(schema)!;
   const { generationId, bitflag, queries, store } = c;
+  const deltaTrackingActive = !!(world as any)[$deltaDirtyState];
 
   // Add bitflag to entity bitmask
   world["entityMasks"][generationId][eid] |= bitflag;
@@ -98,6 +100,18 @@ export function addComponent<T>(
       } else {
         store[key][eid] = (overrides as any)[key];
       }
+    }
+  }
+
+  // Mark all component properties dirty so delta serializers include newly added components.
+  if (deltaTrackingActive) {
+    const flattened = store[$storeFlattened];
+    if (flattened.length) {
+      for (let i = 0; i < flattened.length; i++) {
+        markDeltaDirty(world, flattened[i], eid);
+      }
+    } else {
+      markDeltaDirty(world, store, eid);
     }
   }
 
@@ -178,6 +192,20 @@ export const removeComponent = (world: World, component: typeof Schema, eid: num
   world.componentList[component.index].proxies[eid] = null;
   const c = world["componentMap"].get(component)!;
   const { generationId, bitflag, queries } = c;
+  const store = c.store;
+  const deltaTrackingActive = !!(world as any)[$deltaDirtyState];
+
+  // Track membership removals for delta serializers.
+  if (deltaTrackingActive) {
+    const flattened = store[$storeFlattened];
+    if (flattened.length) {
+      for (let i = 0; i < flattened.length; i++) {
+        markDeltaDirty(world, flattened[i], eid);
+      }
+    } else {
+      markDeltaDirty(world, store, eid);
+    }
+  }
 
   // Remove flag from entity bitmask
   world["entityMasks"][generationId][eid] &= ~bitflag;
@@ -230,6 +258,7 @@ const getComponentOwnKeys = (component: WorldComponent): string[] => {
 };
 
 const proxyComponent = (world: World, entity: number, component: WorldComponent) => {
+  const worldAny = world as any;
   const store = component.store;
   const type = component.type;
 
@@ -248,6 +277,9 @@ const proxyComponent = (world: World, entity: number, component: WorldComponent)
         } else {
           arr[entity] = value;
         }
+        if (worldAny[$deltaDirtyState]) {
+          markDeltaDirty(world, arr, entity);
+        }
         return true;
       },
       get: (target: any, key) => {
@@ -259,6 +291,10 @@ const proxyComponent = (world: World, entity: number, component: WorldComponent)
           return undefined;
         }
         const value = arr[entity];
+        if (worldAny[$deltaDirtyState] && (ArrayBuffer.isView(value) || (value && typeof value === "object"))) {
+          // Mutations to returned views/objects bypass proxy set traps, so mark as dirty preemptively.
+          markDeltaDirty(world, arr, entity);
+        }
         if (component.booleanKeys?.has(key as string)) return !!value;
         return value;
       },

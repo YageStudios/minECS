@@ -7,6 +7,7 @@ import { SerialMode } from "./Types";
 import type { SparseSet } from "./SparseSet";
 import { Base64 } from "js-base64";
 import { getComponentSchema, hasComponent } from "./World";
+import { activateDeltaDirtyTracking, clearDeltaDirtyTracking, consumeDeltaDirtyTracking } from "./DeltaTracking";
 
 const { cloneDeep, isEqual } = lodash;
 
@@ -18,6 +19,7 @@ type DeltaShadow =
 type DeltaState = {
   changedProps: Map<any, DeltaShadow>;
   storeEntityCache: Map<any, Set<number>>;
+  dirtyProps?: Map<any, number[]>;
 };
 
 export const SERIALIZER_VERSION = 2;
@@ -204,12 +206,19 @@ const serialzeProp = (
   return [where, propComplexData];
 };
 
-const serializeEntities = (world: World, where: number, view: DataView, deltaState?: DeltaState): number => {
+const serializeEntities = (
+  world: World,
+  where: number,
+  view: DataView,
+  deltaState?: DeltaState,
+  mode: number = 0
+): number => {
   const worldSerializer = true;
 
   const changedProps = deltaState ? deltaState.changedProps : new Map<any, DeltaShadow>();
   let componentProps = [] as Store[];
   const storeEntityCache = deltaState ? deltaState.storeEntityCache : null;
+  const dirtyProps = deltaState?.dirtyProps;
 
   const complexEntityData: any = {};
   if (worldSerializer) {
@@ -226,7 +235,6 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
   const ents = world["entitySparseSet"].dense;
 
   const storeEntityListCache = new Map<any, number[]>();
-  const storeNewlyAddedCache = deltaState ? new Map<any, Set<number>>() : null;
 
   // iterate over component props
   for (let pid = 0; pid < componentProps.length; pid++) {
@@ -240,32 +248,40 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
     // @ts-ignore
     const shadow = deltaShadow && "symbol" in deltaShadow ? prop[deltaShadow.symbol] : null;
 
-    let storeEntities = storeEntityListCache.get(store);
-    if (!storeEntities) {
-      storeEntities = [];
-      for (let i = 0; i < ents.length; i++) {
-        const eid = ents[i];
-        if ((componentMasks[eid] & componentBitflag) === componentBitflag) {
-          storeEntities.push(eid);
-        }
+    let entitiesToProcess: number[] = [];
+
+    let prevMembers: Set<number> | null = null;
+    if (storeEntityCache) {
+      if (!storeEntityCache.has(store)) {
+        storeEntityCache.set(store, new Set<number>());
       }
-      storeEntityListCache.set(store, storeEntities);
+      prevMembers = storeEntityCache.get(store)!;
+    }
 
-      if (storeEntityCache && storeNewlyAddedCache) {
-        const prevMembers = storeEntityCache.get(store) || new Set<number>();
-        const nextMembers = new Set<number>();
-        const newlyAdded = new Set<number>();
-
-        for (let i = 0; i < storeEntities.length; i++) {
-          const eid = storeEntities[i];
-          nextMembers.add(eid);
-          if (!prevMembers.has(eid)) {
-            newlyAdded.add(eid);
+    if (mode === 1 && deltaState) {
+      const dirtyList = dirtyProps?.get(prop);
+      if (!dirtyList || dirtyList.length === 0) {
+        continue;
+      }
+      entitiesToProcess = dirtyList;
+    } else {
+      let storeEntities = storeEntityListCache.get(store);
+      if (!storeEntities) {
+        storeEntities = [];
+        for (let i = 0; i < ents.length; i++) {
+          const eid = ents[i];
+          if ((componentMasks[eid] & componentBitflag) === componentBitflag) {
+            storeEntities.push(eid);
           }
         }
-
-        storeEntityCache.set(store, nextMembers);
-        storeNewlyAddedCache.set(store, newlyAdded);
+        storeEntityListCache.set(store, storeEntities);
+      }
+      entitiesToProcess = storeEntities;
+      if (prevMembers) {
+        prevMembers.clear();
+        for (let i = 0; i < storeEntities.length; i++) {
+          prevMembers.add(storeEntities[i]);
+        }
       }
     }
 
@@ -279,12 +295,25 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
 
     let writeCount = 0;
 
-    const storeNewlyAdded = storeNewlyAddedCache ? storeNewlyAddedCache.get(store) : null;
-
     // write eid,val
-    for (let i = 0; i < storeEntities.length; i++) {
-      const eid = storeEntities[i];
-      const newlyAddedComponent = storeNewlyAdded ? storeNewlyAdded.has(eid) : false;
+    for (let i = 0; i < entitiesToProcess.length; i++) {
+      const eid = entitiesToProcess[i];
+      const isCurrentMember = (componentMasks[eid] & componentBitflag) === componentBitflag;
+      let newlyAddedComponent = false;
+
+      if (mode === 1 && prevMembers) {
+        newlyAddedComponent = isCurrentMember && !prevMembers.has(eid);
+        if (isCurrentMember) {
+          prevMembers.add(eid);
+        } else {
+          prevMembers.delete(eid);
+        }
+      }
+
+      if (!isCurrentMember) {
+        continue;
+      }
+
       const rewindWhere = where;
 
       // write eid
@@ -293,7 +322,7 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
 
       // if it's a tag store we can stop here
       if (prop[$tagStore]) {
-        if (deltaState && !newlyAddedComponent) {
+        if (mode === 1 && !newlyAddedComponent) {
           where = rewindWhere;
           continue;
         }
@@ -328,7 +357,7 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
 
             // if state has not changed since the last call
             // todo: if newly added then entire component will serialize (instead of only changed values)
-            if (!changed && !newlyAddedComponent) {
+            if (mode === 1 && !changed && !newlyAddedComponent) {
               // skip writing this value
               continue;
             }
@@ -360,7 +389,7 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
           continue;
         }
       } else {
-        if (deltaShadow && !newlyAddedComponent) {
+        if (mode === 1 && deltaShadow && !newlyAddedComponent) {
           if (deltaShadow.kind === "typed") {
             // @ts-ignore
             const typedShadow = prop[deltaShadow.symbol];
@@ -395,7 +424,7 @@ const serializeEntities = (world: World, where: number, view: DataView, deltaSta
           );
         }
 
-        if (deltaShadow && newlyAddedComponent) {
+        if (deltaShadow && (mode === 0 || newlyAddedComponent)) {
           if (deltaShadow.kind === "typed") {
             // @ts-ignore
             prop[deltaShadow.symbol][eid] = prop[eid];
@@ -619,7 +648,7 @@ const serializeWorldToBuffer = (world: World, maxBytes = 20000000, deltaState?: 
     }
   });
 
-  where = serializeEntities(world, where, view, deltaState);
+  where = serializeEntities(world, where, view, deltaState, mode);
 
   return buffer.slice(0, where);
 };
@@ -679,6 +708,8 @@ export const createDeltaSerializer = (world: World) => {
   const storeEntityCache = new Map<any, Set<number>>();
 
   const initShadows = () => {
+    activateDeltaDirtyTracking(world);
+    clearDeltaDirtyTracking(world);
     changedProps.clear();
     storeEntityCache.clear();
     world.componentMap.forEach((c) => {
@@ -708,12 +739,14 @@ export const createDeltaSerializer = (world: World) => {
       // First call: full serialization (mode 0) but with shadows active so they get synced
       return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache }, 0);
     }
+    const dirtyProps = consumeDeltaDirtyTracking(world);
     // Subsequent calls: delta serialization (mode 1)
-    return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache }, 1);
+    return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache, dirtyProps }, 1);
   };
 
   const reset = () => {
     initialized = false;
+    clearDeltaDirtyTracking(world);
   };
 
   return { serialize, reset };
