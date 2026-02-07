@@ -230,3 +230,28 @@ describe("underscore-prefixed property keys", () => {
     expect(world(WithUnderscore, eid).hidden).toBe(42);
   });
 });
+
+describe("decorator branch edge cases", () => {
+  test("typed tuple metadata only set when type key exists", () => {
+    class TupleTarget extends Schema {}
+
+    const targetKnown = { constructor: TupleTarget };
+    type(["float32", 3])(targetKnown, "known");
+
+    const targetUnknown = { constructor: TupleTarget };
+    type(["string", 3])(targetUnknown, "unknown");
+
+    const tupleMeta = (TupleTarget as typeof Schema & { __minECS?: Record<string, unknown> }).__minECS ?? {};
+    expect(tupleMeta.known).toEqual(["f32", 3]);
+    expect(tupleMeta.unknown).toBeUndefined();
+  });
+
+  test("defaultValue with non-string key does not mark required", () => {
+    class SymbolKeyTarget extends Schema {}
+    const target = { constructor: SymbolKeyTarget };
+    const sym = Symbol("symDefault");
+    defaultValue(123)(target, sym as unknown as string);
+
+    expect(SymbolKeyTarget.schema.required).toEqual([]);
+  });
+});

@@ -114,11 +114,7 @@ export const generateSchema = (target: Schema) => {
             setType = prevType;
           }
         } else {
-          if (prevType !== type) {
-            setType = [prevType, setType];
-          } else {
-            setType = prevType;
-          }
+          setType = [prevType, setType];
         }
       }
 

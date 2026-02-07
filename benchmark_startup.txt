@@ -2,31 +2,31 @@
   Startup Benchmark (350 components)
 ======================================================================
 
-  createWorld default (1k)                          15.217ms
+  createWorld default (1k)                          23.739ms
     -> 350 components, size=1000
-  createWorld 10k                                   56.548ms
+  createWorld 10k                                   65.523ms
     -> 350 components, size=10000
-  createWorld 50k                                  240.161ms
+  createWorld 50k                                  235.818ms
     -> 350 components, size=50000
-  createWorld + populate 1k ents                    30.401ms
+  createWorld + populate 1k ents                    25.824ms
     -> 350 components registered, 3 added per entity
-  freezeComponentOrder (no-op)                       0.008ms
+  freezeComponentOrder (no-op)                       0.009ms
     -> Already frozen, measures early-return cost
-    createStore: 50 tag components                   0.070ms
-    -> 1.4μs/component
-    createStore: 220 typed components               28.884ms
-    -> 131.3μs/component
-    createStore: 80 mixed components                 3.851ms
-    -> 48.1μs/component
-    createStore: TOTAL (350)                        32.805ms
-    -> 93.7μs/component avg
-    sortComponentQueries (350)                       0.311ms
-    -> 0.9μs/component
-    BREAKDOWN for createWorld (1000)                 7.775ms
+    createStore: 50 tag components                   0.056ms
+    -> 1.1μs/component
+    createStore: 220 typed components                5.383ms
+    -> 24.5μs/component
+    createStore: 80 mixed components                 0.694ms
+    -> 8.7μs/component
+    createStore: TOTAL (350)                         6.134ms
+    -> 17.5μs/component avg
+    sortComponentQueries (350)                       0.396ms
+    -> 1.1μs/component
+    BREAKDOWN for createWorld (1000)                 8.607ms
     -> total
-      createStore (all)                              6.736ms
-    -> 86.6% of total
-      sortComponentQueries                           0.046ms
-    -> 0.6% of total
-      registerComponent overhead                     0.992ms
-    -> 12.8% (bitflags, maps, world init)
+      createStore (all)                             20.558ms
+    -> 238.8% of total
+      sortComponentQueries                           0.042ms
+    -> 0.5% of total
+      registerComponent overhead                   -11.993ms
+    -> -139.3% (bitflags, maps, world init)

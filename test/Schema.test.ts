@@ -215,4 +215,63 @@ describe("Schema constructor", () => {
     const instance = new Schema();
     expect(instance).toBeInstanceOf(Schema);
   });
+
+  test("constructables skip undefined keys", () => {
+    class Child extends Schema {}
+    class Parent extends Schema {}
+    // @ts-ignore test setup
+    Parent.constructables = { missing: Child };
+    const parent = new Parent() as Parent & { missing?: Child };
+    expect(parent.missing).toBeUndefined();
+  });
+});
+
+describe("additional branch coverage", () => {
+  test("setDefault null keeps existing property (does not recreate)", () => {
+    class ExistingNull extends Schema {}
+    const gen = generateSchema({ constructor: ExistingNull } as Schema);
+    gen.setType("v", "number");
+    const before = ExistingNull.schema.properties.v;
+    gen.setDefault("v", null);
+    expect(ExistingNull.schema.properties.v).toBe(before);
+    expect(ExistingNull.schema.properties.v.default).toBeNull();
+  });
+
+  test("setType normalizes alternate numeric types", () => {
+    class AltNum extends Schema {}
+    const gen = generateSchema({ constructor: AltNum } as Schema);
+    gen.setType("v", "float32");
+    expect(AltNum.schema.properties.v.type).toBe("number");
+  });
+
+  test("setType merges scalar previous type with new scalar type", () => {
+    class ScalarMerge extends Schema {}
+    const gen = generateSchema({ constructor: ScalarMerge } as Schema);
+    gen.setType("v", "number");
+    gen.setType("v", "string");
+    expect(ScalarMerge.schema.properties.v.type).toEqual(["number", "string"]);
+  });
+
+  test("setType merges scalar previous type with normalized alt-number type", () => {
+    class ScalarAltMerge extends Schema {}
+    const gen = generateSchema({ constructor: ScalarAltMerge } as Schema);
+    gen.setType("v", "string");
+    gen.setType("v", "float32");
+    expect(ScalarAltMerge.schema.properties.v.type).toEqual(["string", "number"]);
+  });
+
+  test("setType scalar previous type branch merges directly seeded schema type", () => {
+    class SeededScalarMerge extends Schema {}
+    const gen = generateSchema({ constructor: SeededScalarMerge } as Schema);
+    SeededScalarMerge.schema.properties.v = { type: "string" };
+    gen.setType("v", "boolean");
+    expect(SeededScalarMerge.schema.properties.v.type).toEqual(["string", "boolean"]);
+  });
+
+  test("setMapType with string primitive follows primitive map branch", () => {
+    class PrimitiveMap extends Schema {}
+    const gen = generateSchema({ constructor: PrimitiveMap } as Schema);
+    gen.setMapType("m", "float32");
+    expect(PrimitiveMap.schema.properties.m.patternProperties[".*"].type).toBe("number");
+  });
 });

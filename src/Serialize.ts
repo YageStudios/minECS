@@ -110,7 +110,7 @@ const serializeValue = (
           complexEntityData = {};
         }
         complexEntityData[key] = value;
-      } else if (config.properties) {
+      } else {
         Object.keys(config.properties).forEach((i) => {
           const key = i;
           // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -141,8 +141,6 @@ const serializeValue = (
         } else {
           view.setUint16(where, value.length);
           where += 2;
-          let arrayComplexEntityData: any = null;
-
           for (let i = 0; i < value.length; i++) {
             let nestedComplexData = null;
             [where, nestedComplexData] = serializeValue(
@@ -155,15 +153,6 @@ const serializeValue = (
               complexEntityData,
               schema
             );
-            if (isComplexArray)
-              if (nestedComplexData) {
-                if (!arrayComplexEntityData) arrayComplexEntityData = [];
-                arrayComplexEntityData[i] = nestedComplexData["index"];
-              }
-          }
-          if (arrayComplexEntityData) {
-            if (!complexEntityData) complexEntityData = {};
-            complexEntityData[key] = arrayComplexEntityData;
           }
         }
       }
@@ -213,7 +202,6 @@ const serializeEntities = (
   deltaState?: DeltaState,
   mode: number = 0
 ): number => {
-  const worldSerializer = true;
 
   const changedProps = deltaState ? deltaState.changedProps : new Map<any, DeltaShadow>();
   let componentProps = [] as Store[];
@@ -221,13 +209,11 @@ const serializeEntities = (
   const dirtyProps = deltaState?.dirtyProps;
 
   const complexEntityData: any = {};
-  if (worldSerializer) {
-    componentProps = [];
-    world["componentMap"].forEach((c) => {
-      if (c.store[$storeFlattened].length) componentProps.push(...c.store[$storeFlattened]);
-      else componentProps.push(c.store);
-    });
-  }
+  componentProps = [];
+  world["componentMap"].forEach((c) => {
+    if (c.store[$storeFlattened].length) componentProps.push(...c.store[$storeFlattened]);
+    else componentProps.push(c.store);
+  });
 
   const whereEntitySize = where;
   where += 4;

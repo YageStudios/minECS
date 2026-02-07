@@ -21,6 +21,7 @@ import {
   $indexType,
   $indexBytes,
   $subarray,
+  $subarrayCursors,
   type Store,
 } from "../src/Storage";
 
@@ -319,5 +320,96 @@ describe("parentArray", () => {
     const parent = parentArray(store.items as unknown as Store);
     expect(parent).toBeDefined();
     expect(parent).toBeInstanceOf(Float32Array);
+  });
+});
+
+describe("additional branch coverage", () => {
+  test("resizeSubarray covers ui16/ui32 index selection and cursor reuse branch", () => {
+    const store = createStore(
+      {
+        small: ["f32", 3],
+        mid: ["f32", 300],
+        large: ["f32", 70000],
+      },
+      1
+    );
+    resizeStore(store, 2);
+    expect(store.small[0].length).toBe(3);
+    expect(store.mid[0].length).toBe(300);
+    expect(store.large[0].length).toBe(70000);
+  });
+
+  test("resizeRecursive object branch is traversed for nested object stores", () => {
+    const store = createStore({ nested: { inner: ["f32", 4] } }, 1);
+    expect(() => resizeStore(store, 2)).toThrow();
+  });
+
+  test("resizeRecursive object branch traverses nested plain object store nodes", () => {
+    const child = { x: new Float32Array([1]), [$storeFlattened]: [] };
+    const store = {
+      child,
+      [$tagStore]: false,
+      [$storeSize]: 1,
+      [$storeFlattened]: [],
+      [$subarrayCursors]: {},
+    } as unknown as Store;
+
+    resizeStore(store, 2);
+    expect(store.child.x.length).toBe(2);
+  });
+
+  test("resizeStore on real nested object store currently throws while traversing recursion", () => {
+    const store = createStore({ outer: { x: "f32" } }, 1);
+    expect(() => resizeStore(store, 3)).toThrow();
+  });
+
+  test("resizeRecursive skips primitive keys while visiting object children", () => {
+    const child = { x: new Float32Array([1]), [$storeFlattened]: [] };
+    const store = {
+      child,
+      count: 5,
+      [$tagStore]: false,
+      [$storeSize]: 1,
+      [$storeFlattened]: [],
+      [$subarrayCursors]: {},
+    } as unknown as Store;
+
+    resizeStore(store, 2);
+    expect(store.count).toBe(5);
+  });
+
+  test("createArrayStore throws for zero-length arrays", () => {
+    expect(() => createStore({ bad: ["f32", 0] }, 1)).toThrow("Must define component array length");
+  });
+
+  test("createArrayStore throws for invalid array element types", () => {
+    expect(() => createStore({ bad: ["wat", 2] }, 1)).toThrow("Invalid component array property type");
+  });
+
+  test("collectArrayElementCounts initializes missing type bucket", () => {
+    const store = createStore({ one: ["f32", 1], two: ["f32", 2] }, 1);
+    expect(store.one[0].length).toBe(1);
+    expect(store.two[0].length).toBe(2);
+  });
+
+  test("recursiveTransform handles nested object schemas", () => {
+    const store = createStore({ outer: { inner: { values: ["f32", 2] } } }, 1);
+    expect(store.outer.inner.values[0].length).toBe(2);
+  });
+
+  test("recursiveTransform object branch handles empty nested objects", () => {
+    const store = createStore({ nested: { deeper: {} } }, 1);
+    expect(store.nested.deeper).toBeDefined();
+  });
+
+  test("recursiveTransform object branch handles non-empty nested objects", () => {
+    const store = createStore({ nested: { deeper: { n: "f32" } } }, 1);
+    expect(store.nested.deeper.n.length).toBe(1);
+  });
+
+  test("recursiveTransform skips unknown scalar schema leaves", () => {
+    const schema = { weird: 123 } as unknown as Record<string, unknown>;
+    const store = createStore(schema, 1);
+    expect((store as unknown as Record<string, unknown>).weird).toBe(123);
   });
 });

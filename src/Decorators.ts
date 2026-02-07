@@ -80,10 +80,6 @@ export function Component(nameOrCategory?: string | number, category: number = 0
   };
 }
 
-const convertToBitecs = (value: string) => {
-  // @ts-ignore
-  return simpleToBitecs[value];
-};
 const ajv = new Ajv({ useDefaults: true, strict: false, allErrors: true });
 
 const isRecord = (value: any): value is Record<string | number, string | number> => {

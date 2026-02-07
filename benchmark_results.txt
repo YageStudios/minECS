@@ -1,104 +1,104 @@
 ==========================================================================================
   minECS Performance Benchmark Results
-  Date: 2026-02-07T11:47:37.480Z
+  Date: 2026-02-07T13:59:58.415Z
 ==========================================================================================
 
 ------------------------------------------------------------------------------------------
   Entity
 ------------------------------------------------------------------------------------------
-  Entity: Create 10,000 entities                        12.785ms    12.7850ms/op          78 ops/s           -
+  Entity: Create 10,000 entities                        19.367ms    19.3670ms/op          52 ops/s           -
     -> Measures raw addEntity throughput
-  Entity: Create 50,000 entities                        14.987ms    14.9870ms/op          67 ops/s           -
+  Entity: Create 50,000 entities                        19.454ms    19.4540ms/op          51 ops/s           -
     -> Stress test entity creation at scale
-  Entity: Remove 10,000 entities                         3.782ms     3.7820ms/op         264 ops/s           -
+  Entity: Remove 10,000 entities                         8.131ms     8.1310ms/op         123 ops/s           -
     -> Measures removeEntity throughput
-  Entity: Remove 10,000 entities w/ components           4.628ms     4.6280ms/op         216 ops/s           -
+  Entity: Remove 10,000 entities w/ components          10.836ms    10.8360ms/op          92 ops/s           -
     -> Entities have 2 components each
-  Entity: Recycle 5,000 entities                         0.560ms     0.5600ms/op       1,785 ops/s           -
+  Entity: Recycle 5,000 entities                         2.967ms     2.9670ms/op         337 ops/s           -
     -> Re-use entity IDs from removed pool
 ------------------------------------------------------------------------------------------
   Component
 ------------------------------------------------------------------------------------------
-  Component: Add 1 comp to 10,000 entities               9.070ms     9.0700ms/op         110 ops/s           -
+  Component: Add 1 comp to 10,000 entities              17.311ms    17.3110ms/op          58 ops/s           -
     -> Single component addComponent with overrides
-  Component: Add 3 comps to 10,000 entities             29.547ms    29.5470ms/op          34 ops/s           -
+  Component: Add 3 comps to 10,000 entities             72.800ms    72.8000ms/op          14 ops/s           -
     -> 3 components per entity with overrides
-  Component: Remove 1 comp from 10,000 entities          6.085ms     6.0850ms/op         164 ops/s           -
+  Component: Remove 1 comp from 10,000 entities         12.543ms    12.5430ms/op          80 ops/s           -
     -> Remove Position from entities that also have Velocity
 ------------------------------------------------------------------------------------------
   Proxy
 ------------------------------------------------------------------------------------------
-  Proxy: Read 10,000 entities (x + y)                    2.751ms     2.7510ms/op         364 ops/s           -
+  Proxy: Read 10,000 entities (x + y)                    6.296ms     6.2960ms/op         159 ops/s           -
     -> Read 2 properties per entity via proxy
-  Proxy: Write 10,000 entities (x, y)                    2.766ms     2.7660ms/op         362 ops/s           -
+  Proxy: Write 10,000 entities (x, y)                    2.834ms     2.8340ms/op         353 ops/s           -
     -> Write 2 properties per entity via proxy
-  Proxy: Read+Write 10k ents (per iter)                583.377ms     5.8338ms/op         171 ops/s           -
+  Proxy: Read+Write 10k ents (per iter)                567.367ms     5.6737ms/op         176 ops/s           -
     -> Simulates a simple movement update
 ------------------------------------------------------------------------------------------
   Query
 ------------------------------------------------------------------------------------------
-  Query: Initial query 10,000 matching ents              0.266ms     0.2660ms/op       3,759 ops/s           -
+  Query: Initial query 10,000 matching ents              0.119ms     0.1190ms/op       8,382 ops/s           -
     -> First call creates and populates query
-  Query: Iterate 10k ents (per iter)                     5.829ms     0.0583ms/op      17,157 ops/s           -
+  Query: Iterate 10k ents (per iter)                     5.666ms     0.0567ms/op      17,649 ops/s           -
     -> Repeated iteration of a cached query
-  Query: has() check on 10,000 entities                  0.696ms     0.6960ms/op       1,437 ops/s           -
+  Query: has() check on 10,000 entities                  0.647ms     0.6470ms/op       1,545 ops/s           -
     -> Check membership for half-matching set
-  Query: hasComponent check 10,000 entities              0.699ms     0.6990ms/op       1,431 ops/s           -
+  Query: hasComponent check 10,000 entities              0.671ms     0.6710ms/op       1,489 ops/s           -
     -> Bitflag-based component check
 ------------------------------------------------------------------------------------------
   System
 ------------------------------------------------------------------------------------------
-  System: stepWorld 10k ents, 2 systems                721.977ms     7.2198ms/op         139 ops/s           -
+  System: stepWorld 10k ents, 2 systems                742.618ms     7.4262ms/op         135 ops/s           -
     -> Movement + Health systems
-  System: stepWorld 1k ents, 2 systems                 732.570ms     0.7326ms/op       1,365 ops/s           -
+  System: stepWorld 1k ents, 2 systems                 745.716ms     0.7457ms/op       1,341 ops/s           -
     -> Smaller world for per-frame cost
 ------------------------------------------------------------------------------------------
   Serialize
 ------------------------------------------------------------------------------------------
-  Serialize: JSON 1,000 entities                        14.618ms     1.4618ms/op         684 ops/s           -
+  Serialize: JSON 1,000 entities                        14.981ms     1.4981ms/op         668 ops/s           -
     -> Full world JSON serialization
-  Serialize: Binary 1,000 entities                       8.300ms     0.8300ms/op       1,205 ops/s           -
+  Serialize: Binary 1,000 entities                      13.828ms     1.3828ms/op         723 ops/s           -
     -> Full world binary serialization
-  Serialize: Binary 5,000 entities                       3.500ms     3.5000ms/op         286 ops/s           -
+  Serialize: Binary 5,000 entities                       3.451ms     3.4510ms/op         290 ops/s           -
     -> Larger binary serialization
-  Serialize: Binary 1,000 ents [No Delta + size]        15.440ms     1.5440ms/op         648 ops/s    102.88KB
+  Serialize: Binary 1,000 ents [No Delta + size]        13.914ms     1.3914ms/op         719 ops/s    102.88KB
     -> Payload 102.88KB
-  Serialize: Binary 1,000 ents [Delta + size]            1.800ms     0.1800ms/op       5,555 ops/s     13.02KB
+  Serialize: Binary 1,000 ents [Delta + size]            2.467ms     0.2467ms/op       4,054 ops/s     13.02KB
     -> Payload 13.02KB
 ------------------------------------------------------------------------------------------
   Deserialize
 ------------------------------------------------------------------------------------------
-  Deserialize: Binary 1,000 entities                    25.455ms     2.5455ms/op         393 ops/s           -
+  Deserialize: Binary 1,000 entities                    25.596ms     2.5596ms/op         391 ops/s           -
     -> Full world binary deserialization
-  Deserialize: Binary 1,000 ents [No Delta + size]      42.186ms     4.2186ms/op         237 ops/s    102.88KB
+  Deserialize: Binary 1,000 ents [No Delta + size]      41.470ms     4.1470ms/op         241 ops/s    102.88KB
     -> Payload 102.88KB
-  Deserialize: Delta apply 1,000 ents [Delta + size]    11.343ms     0.2269ms/op       4,408 ops/s     13.02KB
+  Deserialize: Delta apply 1,000 ents [Delta + size]     9.454ms     0.1891ms/op       5,289 ops/s     13.02KB
     -> Payload 13.02KB
 ------------------------------------------------------------------------------------------
   Mixed
 ------------------------------------------------------------------------------------------
-  Mixed: 100 frames (spawn/despawn/step)               451.454ms   451.4540ms/op           2 ops/s           -
+  Mixed: 100 frames (spawn/despawn/step)               451.245ms   451.2450ms/op           2 ops/s           -
     -> 5000 initial + 50 spawns - 30 removals per frame
 ------------------------------------------------------------------------------------------
   SparseSet
 ------------------------------------------------------------------------------------------
-  SparseSet: entityExists 10k checks                    40.755ms     0.4076ms/op       2,454 ops/s           -
+  SparseSet: entityExists 10k checks                    41.540ms     0.4154ms/op       2,407 ops/s           -
     -> SparseSet.has() via entityExists
 ------------------------------------------------------------------------------------------
   World
 ------------------------------------------------------------------------------------------
-  World: createWorld (default size)                     11.896ms     0.1190ms/op       8,406 ops/s           -
+  World: createWorld (default size)                     10.713ms     0.1071ms/op       9,334 ops/s           -
     -> World initialization with default 1000 entities
-  World: createWorld (size=50000)                       41.687ms     4.1687ms/op         240 ops/s           -
+  World: createWorld (size=50000)                       41.061ms     4.1061ms/op         244 ops/s           -
     -> World initialization with 50k entity capacity
 
 ==========================================================================================
   Total benchmarks: 29
-  Total benchmark time: 2800.809ms
+  Total benchmark time: 2905.063ms
 ------------------------------------------------------------------------------------------
   Delta Comparison Totals
 ------------------------------------------------------------------------------------------
-  Serialize Binary 1k: no-delta 15.440ms (102.88KB), delta 1.800ms (13.02KB), diff -88.3% time, -87.3% size
-  Deserialize Binary 1k: no-delta 42.186ms (102.88KB), delta 11.343ms (13.02KB), diff -73.1% time, -87.3% size
-  TOTAL: no-delta 57.626ms (205.77KB), delta 13.143ms (26.03KB), diff -77.2% time, -87.3% size
+  Serialize Binary 1k: no-delta 13.914ms (102.88KB), delta 2.467ms (13.02KB), diff -82.3% time, -87.3% size
+  Deserialize Binary 1k: no-delta 41.470ms (102.88KB), delta 9.454ms (13.02KB), diff -77.2% time, -87.3% size
+  TOTAL: no-delta 55.384ms (205.77KB), delta 11.921ms (26.03KB), diff -78.5% time, -87.3% size
 ==========================================================================================
