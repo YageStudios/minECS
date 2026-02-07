@@ -542,6 +542,7 @@ describe("World remaining branches", () => {
     // `type` exists in runtime schema and should be skipped by addComponent writes.
     // @ts-expect-error Intentional runtime key-path test.
     addComponent(world, TailScalar, eid, { type: "WrongType", n: 3 });
+    // @ts-expect-error Intentional runtime key-path test.
     expect(world(TailScalar, eid).type).toBe("TailScalar");
     expect(world(TailScalar, eid).n).toBe(3);
   });

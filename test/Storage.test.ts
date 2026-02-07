@@ -394,6 +394,7 @@ describe("additional branch coverage", () => {
 
   test("recursiveTransform handles nested object schemas", () => {
     const store = createStore({ outer: { inner: { values: ["f32", 2] } } }, 1);
+    // @ts-expect-error Accessing nested properties for test purposes
     expect(store.outer.inner.values[0].length).toBe(2);
   });
 
