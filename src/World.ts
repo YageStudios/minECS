@@ -60,11 +60,15 @@ export const removeEntity = (world: World, eid: number) => {
 
 export const entityExists = (world: World, eid: number) => world["entitySparseSet"].has(eid);
 
+type ComponentInput<T> = {
+  [K in keyof T]?: T[K] extends ArrayBufferView ? T[K] | number[] : T[K];
+};
+
 export function addComponent<T>(
   world: World,
   component: Constructor<T>,
   eid: number,
-  overrides?: Partial<T>,
+  overrides?: ComponentInput<T>,
   reset?: boolean
 ) {
   const schema = component as unknown as typeof Schema;
@@ -88,7 +92,13 @@ export function addComponent<T>(
   const keys = Object.keys(overrides);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
-    if (key !== "type") store[key][eid] = (overrides as any)[key];
+    if (key !== "type") {
+      if (ArrayBuffer.isView(store[key]?.[eid])) {
+        (store[key][eid] as unknown as Float32Array).set((overrides as any)[key]);
+      } else {
+        store[key][eid] = (overrides as any)[key];
+      }
+    }
   }
 
   const systemQueryMap = world.systemQueryMap;
@@ -233,7 +243,11 @@ const proxyComponent = (world: World, entity: number, component: WorldComponent)
         if (!arr) {
           return false;
         }
-        arr[entity] = value;
+        if (ArrayBuffer.isView(arr[entity])) {
+          (arr[entity] as unknown as Float32Array).set(value);
+        } else {
+          arr[entity] = value;
+        }
         return true;
       },
       get: (target: any, key) => {

@@ -282,12 +282,14 @@ describe("createShadow", () => {
     store.x[5] = 99;
 
     createShadow(store.x, $queryShadow);
-
+    // @ts-ignore
     expect(store.x[$queryShadow][0]).toBe(42);
+    // @ts-ignore
     expect(store.x[$queryShadow][5]).toBe(99);
 
     // Mutating original doesn't affect shadow
     store.x[0] = 100;
+    // @ts-ignore
     expect(store.x[$queryShadow][0]).toBe(42);
   });
 
@@ -299,6 +301,7 @@ describe("createShadow", () => {
     createShadow(store.items as unknown as Store, $serializeShadow);
 
     // Shadow should exist
+    // @ts-ignore
     expect(store.items[$serializeShadow]).toBeDefined();
   });
 });

@@ -71,17 +71,18 @@ export const resize = (ta: any, size: number) => {
   return newTa;
 };
 
-export const createShadow = (store: Store, key: number) => {
+export const createShadow = (store: Store, key: number | symbol) => {
+  const s = store as any;
   if (!ArrayBuffer.isView(store)) {
     const shadowStore = store[$parentArray].slice(0);
-    store[key] = store.map((_: any, eid: number) => {
+    s[key] = store.map((_: any, eid: number) => {
       const { length } = store[eid];
       const start = length * eid;
       const end = start + length;
       return shadowStore.subarray(start, end);
     });
   } else {
-    store[key] = store.slice(0);
+    s[key] = store.slice(0);
   }
 };
 
@@ -153,7 +154,9 @@ export const resetStore = (store: Store) => {
     store[$storeFlattened].forEach((ta) => {
       if (ta._data) {
         ta._data = {};
-      } else ta.fill(0);
+      } else if (!ta[$parentArray]) {
+        ta.fill(0);
+      }
     });
     if (store[$storeSubarrays]) {
       Object.keys(store[$storeSubarrays]).forEach((key) => {

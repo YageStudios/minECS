@@ -223,7 +223,10 @@ describe("underscore-prefixed property keys", () => {
   test("underscore is stripped from property key in schema", () => {
     const world = createWorld();
     const eid = addEntity(world);
+
+    // @ts-ignore
     addComponent(world, WithUnderscore, eid, { hidden: 42 });
+    // @ts-ignore
     expect(world(WithUnderscore, eid).hidden).toBe(42);
   });
 });

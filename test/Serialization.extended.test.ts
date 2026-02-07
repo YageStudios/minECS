@@ -439,3 +439,105 @@ describe("Multiple entity mask generations", () => {
     expect(clone.entityMasks.length).toBeGreaterThan(1);
   });
 });
+
+// Fixed-length typed subarrays: @type(["float32", N]) creates a
+// contiguous TypedArray backing with per-entity subviews.
+// This exercises Serialize.ts lines 270-324 (ArrayBuffer.isView path).
+@Component()
+class Velocity extends Schema {
+  @type(["float32", 3])
+  xyz: Float32Array;
+}
+
+@Component()
+class Color extends Schema {
+  @type(["uint8", 4])
+  rgba: Uint8Array;
+}
+
+describe("Typed subarray binary serialization", () => {
+  test("float32 subarray survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [1.5, -2.25, 3.0] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    const vel = clone(Velocity, eid).xyz;
+    expect(vel[0]).toBeCloseTo(1.5);
+    expect(vel[1]).toBeCloseTo(-2.25);
+    expect(vel[2]).toBeCloseTo(3.0);
+  });
+
+  test("uint8 subarray survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Color, eid, { rgba: [255, 128, 0, 200] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    const col = clone(Color, eid).rgba;
+    expect(col[0]).toBe(255);
+    expect(col[1]).toBe(128);
+    expect(col[2]).toBe(0);
+    expect(col[3]).toBe(200);
+  });
+
+  test("multiple entities with typed subarrays", () => {
+    const world = createWorld();
+    const e1 = addEntity(world);
+    const e2 = addEntity(world);
+    addComponent(world, Velocity, e1, { xyz: [10, 20, 30] });
+    addComponent(world, Velocity, e2, { xyz: [40, 50, 60] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(Velocity, e1).xyz[0]).toBeCloseTo(10);
+    expect(clone(Velocity, e2).xyz[2]).toBeCloseTo(60);
+  });
+
+  test("zeroed subarray survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid);
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    const vel = clone(Velocity, eid).xyz;
+    expect(vel[0]).toBe(0);
+    expect(vel[1]).toBe(0);
+    expect(vel[2]).toBe(0);
+  });
+
+  test("typed subarray survives base64 round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid, { xyz: [7.5, 8.5, 9.5] });
+
+    const b64 = serializeWorld(SerialMode.BASE64, world);
+    const clone = deserializeWorld(b64);
+
+    expect(clone(Velocity, eid).xyz[0]).toBeCloseTo(7.5);
+    expect(clone(Velocity, eid).xyz[1]).toBeCloseTo(8.5);
+    expect(clone(Velocity, eid).xyz[2]).toBeCloseTo(9.5);
+  });
+
+  test("proxy set works with typed subarrays", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, Velocity, eid);
+
+    world(Velocity, eid).xyz = [1, 2, 3] as any;
+    expect(world(Velocity, eid).xyz[0]).toBeCloseTo(1);
+    expect(world(Velocity, eid).xyz[1]).toBeCloseTo(2);
+    expect(world(Velocity, eid).xyz[2]).toBeCloseTo(3);
+  });
+});

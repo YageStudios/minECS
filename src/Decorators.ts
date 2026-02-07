@@ -130,6 +130,13 @@ export function type(
       schema.setEntityFlag(key);
     } else if (Array.isArray(type)) {
       schema.setArrayType(key, type[0]);
+      if (type.length === 2 && typeof type[1] === "number") {
+        const typeKey = simpleToTypeKey[type[0] as string];
+        if (typeKey) {
+          target.constructor.__minECS = target.constructor.__minECS || {};
+          target.constructor.__minECS[key] = [typeKey, type[1]];
+        }
+      }
     } else if (typeof type === "object" && type?.set) {
       schema.setMapType(key, type.set);
     } else if (typeof type === "function") {
