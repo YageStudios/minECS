@@ -244,7 +244,9 @@ const proxyComponent = (world: World, entity: number, component: WorldComponent)
         if (!arr) {
           return undefined;
         }
-        return arr[entity];
+        const value = arr[entity];
+        if (component.booleanKeys?.has(key as string)) return !!value;
+        return value;
       },
       ownKeys: () => {
         return getComponentOwnKeys(component);
@@ -418,11 +420,12 @@ const registerComponent = (world: World, schema: typeof Schema) => {
     type: schema.type,
     generationId: world["entityMasks"].length - 1,
     bitflag: world["bitflag"],
-    store: schema.createStore(),
+    store: schema.createStore(world["size"]),
     queries,
     changedQueries,
     proxies: [],
     schema: schema,
+    booleanKeys: (schema as any).__booleanKeys || null,
   };
   world["componentMap"].set(schema, worldComponent);
 

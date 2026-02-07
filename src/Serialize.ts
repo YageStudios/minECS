@@ -374,8 +374,9 @@ const serializeComponent = <T>(entityId: number, component: WorldComponent) => {
     if (key.startsWith("_") || key === "id" || key === "store" || key === "type") {
       return;
     }
-    const value = cloneDeep(component.store[key][entityId]);
+    let value = cloneDeep(component.store[key][entityId]);
     if (value !== undefined) {
+      if (component.booleanKeys?.has(key)) value = !!value;
       data[key] = value;
     }
   });

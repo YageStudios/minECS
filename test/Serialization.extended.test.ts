@@ -277,6 +277,131 @@ describe("Version mismatch", () => {
   });
 });
 
+// Sub-object with ONLY simple properties (no nested objects/arrays)
+// This forces serializeValue to iterate properties individually,
+// hitting the "boolean" case (lines 149-151 of Serialize.ts)
+@Component()
+class FlatSettings extends Schema {
+  @type("number")
+  @defaultValue(0)
+  speed: number;
+
+  @type("boolean")
+  @defaultValue(false)
+  active: boolean;
+
+  @type("string")
+  @defaultValue("")
+  label: string;
+}
+
+@Component()
+class HasFlatSettings extends Schema {
+  @type(FlatSettings)
+  settings: FlatSettings;
+}
+
+@Component()
+class BoolArrayComp extends Schema {
+  @type(["boolean"])
+  flags: boolean[];
+}
+
+@Component()
+class NumberArrayComp extends Schema {
+  @type(["number"])
+  values: number[];
+}
+
+describe("Boolean in sub-object binary serialization", () => {
+  test("boolean field in flat sub-object survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, HasFlatSettings, eid, {
+      settings: { speed: 3.14, active: true, label: "on" },
+    });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(HasFlatSettings, eid).settings.speed).toBe(3.14);
+    expect(clone(HasFlatSettings, eid).settings.active).toBe(true);
+    expect(clone(HasFlatSettings, eid).settings.label).toBe("on");
+  });
+
+  test("false boolean survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, HasFlatSettings, eid, {
+      settings: { speed: 0, active: false, label: "" },
+    });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(HasFlatSettings, eid).settings.active).toBe(false);
+    expect(clone(HasFlatSettings, eid).settings.speed).toBe(0);
+  });
+
+  test("flat sub-object survives JSON round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, HasFlatSettings, eid, {
+      settings: { speed: 99, active: true, label: "test" },
+    });
+
+    const json = serializeWorld(SerialMode.JSON, world);
+    const clone = createWorld();
+    deserializeWorld(json, clone);
+
+    expect(clone(HasFlatSettings, eid).settings.speed).toBe(99);
+    expect(clone(HasFlatSettings, eid).settings.active).toBe(true);
+    expect(clone(HasFlatSettings, eid).settings.label).toBe("test");
+  });
+});
+
+describe("Boolean array binary serialization", () => {
+  test("array of booleans survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, BoolArrayComp, eid, { flags: [true, false, true, false] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(BoolArrayComp, eid).flags).toEqual([true, false, true, false]);
+  });
+
+  test("empty boolean array survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, BoolArrayComp, eid, { flags: [] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(BoolArrayComp, eid).flags).toEqual([]);
+  });
+});
+
+describe("Number array binary serialization", () => {
+  test("array of numbers survives binary round-trip", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, NumberArrayComp, eid, { values: [1.5, -3.7, 0, 100] });
+
+    const buffer = serializeWorld(SerialMode.BINARY, world);
+    const clone = createWorld();
+    deserializeWorld(buffer, clone);
+
+    expect(clone(NumberArrayComp, eid).values).toEqual([1.5, -3.7, 0, 100]);
+  });
+});
+
 describe("Multiple entity mask generations", () => {
   test("binary round-trip with overflowed bitflag", () => {
     const world = createWorld();

@@ -14,7 +14,7 @@ export class Schema {
   static readonly index: number;
   static readonly id: number;
   static readonly entityTypes: string[];
-  static createStore: () => Store;
+  static createStore: (size: number) => Store;
 
   constructor() {
     const schema = this.constructor as typeof Schema;

@@ -28,13 +28,13 @@ export const freezeComponentOrder = () => {
   });
 };
 
-export const defineComponent = (componentSchema: typeof Schema, size = 100000) => {
+export const defineComponent = (componentSchema: typeof Schema) => {
   if (componentList.length) {
     throw new Error("minECS - Cannot define a component after the world has been created.");
   }
   componentKeyMap.set(componentSchema.type, componentSchema);
 
-  componentSchema.createStore = () => {
+  componentSchema.createStore = (size: number) => {
     const schema = componentSchema.primativesSchema;
     const store = createStore(schema, size);
     if (componentSchema.schema) {

@@ -107,6 +107,19 @@ export const simpleToBitecs = {
   float64: TYPES.f64,
 };
 
+export const simpleToTypeKey: Record<string, string> = {
+  number: "f64",
+  boolean: "ui8",
+  int8: "i8",
+  uint8: "ui8",
+  int16: "i16",
+  uint16: "ui16",
+  int32: "i32",
+  uint32: "ui32",
+  float32: "f32",
+  float64: "f64",
+};
+
 export enum SerialMode {
   JSON,
   BINARY,
@@ -154,6 +167,7 @@ export type WorldComponent<T extends Schema = any> = {
   schema: typeof Schema;
   changedQueries: Set<Query>;
   proxies: (T | null)[];
+  booleanKeys: Set<string> | null;
 };
 
 export interface World {

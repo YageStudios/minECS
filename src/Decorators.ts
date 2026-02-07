@@ -1,6 +1,6 @@
 import Ajv from "ajv";
 import { generateSchema, type Schema } from "./Schema";
-import { altNumberTypes, simpleToBitecs, type PrimitiveType } from "./Types";
+import { altNumberTypes, simpleToBitecs, simpleToTypeKey, type PrimitiveType } from "./Types";
 import { defineComponent } from "./Component";
 
 const componentStringSchema = new Map<string, typeof Schema>();
@@ -58,6 +58,12 @@ export function Component(nameOrCategory?: string | number, category: number = 0
     componentStringSchema.set(name, cls);
     // @ts-ignore
     cls.type = name;
+
+    // Wire typed number/boolean metadata to primativesSchema for TypedArray store creation
+    if ((cls as any).__minECS) {
+      // @ts-ignore
+      cls.primativesSchema = (cls as any).__minECS;
+    }
 
     defineComponent(cls);
 
@@ -129,10 +135,14 @@ export function type(
     } else if (typeof type === "function") {
       schema.setObjectType(key, type);
     } else {
-      const minECSType = convertToBitecs(type as string);
-      if (minECSType) {
+      const typeKey = simpleToTypeKey[type as string];
+      if (typeKey) {
         target.constructor.__minECS = target.constructor.__minECS || {};
-        target.constructor.__minECS[key] = convertToBitecs(type as string);
+        target.constructor.__minECS[key] = typeKey;
+        if (type === "boolean") {
+          target.constructor.__booleanKeys = target.constructor.__booleanKeys || new Set();
+          target.constructor.__booleanKeys.add(key);
+        }
       }
       // @ts-ignore
       schema.setType(key, altNumberTypes.includes(type) ? "number" : type);

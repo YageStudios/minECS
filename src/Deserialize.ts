@@ -423,6 +423,7 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer) => {
       queries: [],
       changedQueries: new Set<Query>(),
       store: component.store,
+      booleanKeys: (schema as any).__booleanKeys || null,
     };
 
     resetStore(component.store);
@@ -515,6 +516,7 @@ export const deserializeFromJSON = (world: World, serializedWorld: SerializedWor
           proxies: [],
           type: key,
           schema,
+          booleanKeys: (schema as any).__booleanKeys || null,
         } as WorldComponent,
       ];
     })
