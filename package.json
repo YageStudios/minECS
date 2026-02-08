@@ -20,6 +20,7 @@
     "test": "vitest",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "prepublish": "npm run build",
     "pretty": "prettier --write \"./**/*.{js,jsx,json,ts}\""
   },
   "devDependencies": {
