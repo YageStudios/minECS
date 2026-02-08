@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 import type { Store } from "./Storage";
 import { $storeFlattened, free, resetStoreFor } from "./Storage";
-import type { Constructor, Query, ReadOnlyWorld, World, WorldComponent } from "./Types";
+import type { Constructor, Query, ReadOnlyWorld, SystemTiming, World, WorldComponent } from "./Types";
 import { SparseSet } from "./SparseSet";
 import type { Schema } from "./Schema";
 import { componentList, freezeComponentOrder } from "./Component";
 import { queryRemoveEntity, queryCheckEntity, queryAddEntity, defineQuery } from "./Query";
 import type { SystemImpl } from "./System";
-import { drawSystemRunList, systemManualList, systemRunList } from "./System";
+import { $originalRunAll, drawSystemRunList, systemManualList, systemRunList } from "./System";
 import { $deltaDirtyState, markDeltaDirty } from "./DeltaTracking";
 
 const removedReuseThreshold = 0.01;
@@ -358,6 +358,7 @@ export const createWorld = (size?: number): World => {
     systemQueryMap: new Map<string, SystemImpl[]>(),
     systems: [],
     drawSystems: [],
+    timing: null,
   });
 
   componentList.forEach((component) => {
@@ -522,6 +523,76 @@ export const stepWorldDraw = (world: ReadOnlyWorld) => {
     const system = systems[i];
     if (system.query(world).length) {
       system.runAll(world);
+    }
+  }
+};
+
+export const stepWorldTiming = (world: World) => {
+  // Initialize world timing for this frame and clear all system timings
+  world.timing = { systems: [], totalTime: 0 };
+
+  // Wrap runAll for all systems (including manual) with timing
+  const allSystems = world.systems;
+  for (let i = 0; i < allSystems.length; i++) {
+    const system = allSystems[i] as SystemImpl & { [$originalRunAll]?: (world: World) => void };
+
+    // Reset timing for this frame
+    system.timing = {
+      name: system.constructor.name,
+      totalTime: 0,
+      totalCalls: 0,
+      averageTime: 0,
+    };
+
+    // Only wrap if not already wrapped
+    if (!system[$originalRunAll]) {
+      const originalRunAll = system.runAll.bind(system);
+      system[$originalRunAll] = originalRunAll;
+
+      system.runAll = function (w: World) {
+        const t = this.timing;
+        if (t && w.timing) {
+          const ents = this.query(w);
+          const start = performance.now();
+          originalRunAll(w);
+          const elapsed = performance.now() - start;
+
+          t.totalCalls += ents.length;
+          t.totalTime += elapsed;
+          t.averageTime = t.totalCalls > 0 ? t.totalTime / t.totalCalls : 0;
+
+          w.timing.totalTime += elapsed;
+          if (!w.timing.systems.includes(t)) {
+            w.timing.systems.push(t);
+          }
+        } else {
+          originalRunAll(w);
+        }
+      };
+    }
+  }
+
+  // Run all scheduled systems (same as stepWorld)
+  world.frame++;
+  for (let i = 0; i < systemRunList.length; i++) {
+    const system = getSystem(world, systemRunList[i][0]);
+    if (system.query(world).length) {
+      system.runAll(world);
+    }
+  }
+};
+
+export const clearWorldTiming = (world: World) => {
+  world.timing = null;
+  const allSystems = world.systems;
+  for (let i = 0; i < allSystems.length; i++) {
+    const system = allSystems[i] as SystemImpl & { [$originalRunAll]?: (world: World) => void };
+    system.timing = null;
+
+    // Restore original runAll if it was wrapped
+    if (system[$originalRunAll]) {
+      system.runAll = system[$originalRunAll];
+      delete system[$originalRunAll];
     }
   }
 };

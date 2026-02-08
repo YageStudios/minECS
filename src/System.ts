@@ -1,5 +1,8 @@
 import type { Schema } from "./Schema";
-import type { QueryInstance, ReadOnlyWorld, World } from "./Types";
+import type { QueryInstance, ReadOnlyWorld, SystemTiming, World } from "./Types";
+
+// Symbol used to store original runAll when timing is enabled
+export const $originalRunAll = Symbol("originalRunAll");
 
 export function System(categoryOrSchema: number | typeof Schema, ...schemas: (typeof Schema)[]) {
   return function (cls: typeof SystemImpl<any> | typeof DrawSystemImpl<any>) {
@@ -18,6 +21,8 @@ export class SystemImpl<T extends World = World> {
   static queryKey: string = "";
 
   query: QueryInstance<T>;
+  timing: SystemTiming | null = null;
+
   constructor(query: QueryInstance<T>) {
     this.query = query;
   }

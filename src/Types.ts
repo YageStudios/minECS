@@ -170,6 +170,18 @@ export type WorldComponent<T extends Schema = any> = {
   booleanKeys: Set<string> | null;
 };
 
+export type SystemTiming = {
+  name: string;
+  totalTime: number;
+  totalCalls: number;
+  averageTime: number;
+};
+
+export type WorldTiming = {
+  systems: SystemTiming[];
+  totalTime: number;
+};
+
 export interface World {
   <T extends Schema>(schema: Constructor<T>, eid: number): T;
   <T extends Schema>(schema: Constructor<T>): WorldComponent<T>;
@@ -189,6 +201,7 @@ export interface World {
   systemQueryMap: Map<string, SystemImpl[]>;
   systems: any[];
   drawSystems: any[];
+  timing: WorldTiming | null;
 }
 
 export interface ReadOnlyWorld extends World {

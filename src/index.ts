@@ -21,6 +21,8 @@ export {
   disableComponent,
   stepWorld,
   stepWorldDraw,
+  stepWorldTiming,
+  clearWorldTiming,
 } from "./World";
 export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";
