@@ -507,10 +507,31 @@ export const getSystemsByType = <T extends typeof SystemImpl<any>>(world: World,
   return [];
 };
 
+const shouldSystemRun = (frame: number, frameMod: number, frameModOffset: number): boolean => {
+  if (frameMod <= 1 && frameModOffset === 0) return true; // Always run if mod is 1 or less and no offset
+  // Clamp frameMod to 1-60
+  const clampedMod = Math.max(1, Math.min(60, frameMod));
+  // Clamp offset to 0 to frameMod-1
+  const clampedOffset = Math.max(0, Math.min(clampedMod - 1, frameModOffset));
+  // System runs when (frame - offset) % mod === 0, but we need to handle the offset meaning "starts on frame offset+1"
+  // offset of 0 means runs on frame 1, 2, 3... (every frame if mod=1)
+  // offset of 1 means runs on frame 2, 4, 6... (if mod=2)
+  // So we check if (frame - 1 - offset) % mod === 0, where frame is 1-indexed after increment
+  return (frame - 1 - clampedOffset) % clampedMod === 0 && frame > clampedOffset;
+};
+
 export const stepWorld = (world: World) => {
   world.frame++;
   for (let i = 0; i < systemRunList.length; i++) {
-    const system = getSystem(world, systemRunList[i][0]);
+    const SystemClass = systemRunList[i][0];
+    const frameMod = SystemClass.frameMod ?? 1;
+    const frameModOffset = SystemClass.frameModOffset ?? 0;
+
+    if (!shouldSystemRun(world.frame, frameMod, frameModOffset)) {
+      continue;
+    }
+
+    const system = getSystem(world, SystemClass);
     if (system.query(world).length) {
       system.runAll(world);
     }
@@ -520,6 +541,14 @@ export const stepWorld = (world: World) => {
 export const stepWorldDraw = (world: ReadOnlyWorld) => {
   const systems = world.drawSystems;
   for (let i = 0; i < systems.length; i++) {
+    const SystemClass = world.drawSystems[i].constructor as typeof SystemImpl;
+    const frameMod = SystemClass.frameMod ?? 1;
+    const frameModOffset = SystemClass.frameModOffset ?? 0;
+
+    if (!shouldSystemRun(world.frame, frameMod, frameModOffset)) {
+      continue;
+    }
+
     const system = systems[i];
     if (system.query(world).length) {
       system.runAll(world);
@@ -575,7 +604,15 @@ export const stepWorldTiming = (world: World) => {
   // Run all scheduled systems (same as stepWorld)
   world.frame++;
   for (let i = 0; i < systemRunList.length; i++) {
-    const system = getSystem(world, systemRunList[i][0]);
+    const SystemClass = systemRunList[i][0];
+    const frameMod = SystemClass.frameMod ?? 1;
+    const frameModOffset = SystemClass.frameModOffset ?? 0;
+
+    if (!shouldSystemRun(world.frame, frameMod, frameModOffset)) {
+      continue;
+    }
+
+    const system = getSystem(world, SystemClass);
     if (system.query(world).length) {
       system.runAll(world);
     }

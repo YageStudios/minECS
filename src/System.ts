@@ -19,6 +19,8 @@ export class SystemImpl<T extends World = World> {
   static depth: number = 0;
   static category: number = 0;
   static queryKey: string = "";
+  static frameMod: number = 1;
+  static frameModOffset: number = 0;
 
   query: QueryInstance<T>;
   timing: SystemTiming | null = null;

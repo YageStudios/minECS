@@ -47,9 +47,22 @@ class MovementSystem extends SystemImpl {
 }
 ```
 
+### Draw Systems
+Draw systems are specialized for rendering or read-only operations. They are executed via `stepWorldDraw(world)`.
+
+```ts
+@System(Position)
+class RenderSystem extends DrawSystemImpl {
+  run = (world: ReadOnlyWorld, entity: number) => {
+    const pos = world(Position, entity);
+    // Render logic here
+  };
+}
+```
+
 ## Managing Worlds
 
-Worlds manage the complete state of your game, letting you add and remove entities and components:
+Worlds manage the state of your entities and components.
 
 ```ts
 const world = createWorld();
@@ -64,8 +77,22 @@ addComponent(world, Velocity, entity, {
 console.log({ ...world(Position, entity) }); // { x: 0, y: 0, type: "Position" }
 
 stepWorld(world);
-
 console.log({ ...world(Position, entity) }); //  { x: 30, y: 30, type: "Position" }
+
+```
+
+## Queries
+
+Queries provide a way to retrieve and check entities matching a set of components.
+
+```ts
+const movementQuery = defineQuery([Position, Velocity]);
+
+// Get all matching entities
+const entities = movementQuery(world);
+
+// Check if a specific entity matches
+const isMatch = movementQuery.has(world, entity);
 ```
 
 ## Serialization
@@ -77,46 +104,66 @@ const json = serializeWorld(SerialMode.JSON, world);
 const buffer = serializeWorld(SerialMode.BINARY, world);
 const base64 = serializeWorld(SerialMode.BASE64, world);
 
-const newWorldFromJSON = deserializeWorld(json);
-const newWorldFromBinary = deserializeWorld(buffer);
-const newWorldFromBase64 = deserializeWorld(base64);
+const newWorld = deserializeWorld(buffer);
 ```
 
-## Additional Features and Systems
+### Delta Serialization
+Delta serialization tracks changes to component properties, allowing you to transmit only what has changed since the last sync.
 
-In addition to the core functionalities, minECS offers a suite of advanced features to provide more control and flexibility in game development. These include system execution controls, manual and automated system runs, system initialization and cleanup, advanced component types, and detailed entity management. Explore these features to fully leverage the power of minECS in your projects.
+```ts
+const delta = createDeltaSerializer(world);
 
-### System Execution Control with Depth
+// First call creates a full baseline
+const fullBuffer = delta.serialize();
 
-In minECS, the `depth` property of a system determines the order and automatic execution behavior. Systems with different depth values are executed in ascending order, where lower numbers run first.
+// Subsequent calls produce delta buffers
+const patchBuffer = delta.serialize();
+
+// Apply the delta to a target world
+applyDelta(patchBuffer, remoteWorld);
+```
+
+## Additional Features
+
+### System Execution Control
+The `depth` property determines the execution order. Systems with lower depth run first.
+*   **Manual Execution**: Systems with a depth less than `0` do not run automatically in `stepWorld`. They must be triggered manually via `system.runAll(world)` or `system.run(world, entity)`.
 
 ```ts
 @System(...)
-class SomeSystem extends SystemImpl {
-  static depth = 0;  // Lower numbers run first, executed automatically
+class ManualSystem extends SystemImpl {
+  static depth = -1;
 }
 ```
 
-**Manual Execution Only**: If a system is assigned a depth less than `0` it will not run automatically during the standard `run` cycle. Instead, it must be run manually. This is useful for systems that require explicit control or should only execute under specific conditions:
+### Frame Modulation
+Systems can be throttled to run every N frames or at a specific offset. By using frameModOffset heavy systems can be chained and not overload the engine.
 
 ```ts
 @System(...)
-class ManualOnlySystem extends SystemImpl {
-  static depth = -1;  // This system will only run when manually triggered
-
-  run = (world: World, eid: number) => {
-    // Implementation details
-  };
+class OptimizedSystem extends SystemImpl {
+  static frameMod = 10; // Runs every 10 frames
+  static frameModOffset = 2; // Runs on frames 3, 13, 23...
 }
 ```
 
-To run a system manually, you can use the `run` or `runAll` methods of the system instance, providing flexibility in how and when certain parts of your game logic are executed:
+
+### System Timing
+You can monitor the performance of your systems using timing functions.
 
 ```ts
-const world = createWorld();
-const system = getSystem(world, ManualOnlySystem);
-system.runAll(world); // Runs the system manually for all entities
-system.run(world, entity); // Runs the system manually for a specific entity
+// Runs the world step and captures performance data
+stepWorldTiming(world);
+
+if (world.timing) {
+  console.log(`Total time: ${world.timing.totalTime}ms`);
+  world.timing.systems.forEach(s => {
+    console.log(`${s.name}: ${s.totalTime}ms`);
+  });
+}
+
+// Clears timing data and restores original run methods
+clearWorldTiming(world);
 ```
 
 ### System Initialization
@@ -140,7 +187,7 @@ Systems can define a cleanup function that executes when a component is removed 
 @System(...)
 class SomeCleanupSystem extends SystemImpl {
   cleanup = (world: World, eid: number) => {
-    // Cleanup code here
+    // Called when Position is removed or entity is deleted
   };
 }
 ```

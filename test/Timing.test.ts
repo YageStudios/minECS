@@ -1,13 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { Component, type, defaultValue } from "../src/Decorators";
 import { Schema } from "../src/Schema";
-import { SystemImpl, System } from "../src/System";
-import type { World } from "../src/Types";
+import { SystemImpl, DrawSystemImpl, System } from "../src/System";
+import type { ReadOnlyWorld, World } from "../src/Types";
 import {
   createWorld,
   addEntity,
   addComponent,
   stepWorld,
+  stepWorldDraw,
   stepWorldTiming,
   clearWorldTiming,
   getSystem,
@@ -78,6 +79,109 @@ class CustomRunAllSystem extends SystemImpl {
   }
 }
 
+// Components and systems for frameMod testing
+@Component()
+class FrameModComp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(FrameModComp)
+class EveryFrameSystem extends SystemImpl {
+  static depth = 0;
+  static frameMod = 1;
+  static frameModOffset = 0;
+  run = (world: World, eid: number) => {
+    world(FrameModComp, eid).runCount += 1;
+  };
+}
+
+@Component()
+class FrameMod2Comp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(FrameMod2Comp)
+class EveryOtherFrameSystem extends SystemImpl {
+  static depth = 0;
+  static frameMod = 2;
+  static frameModOffset = 0;
+  run = (world: World, eid: number) => {
+    world(FrameMod2Comp, eid).runCount += 1;
+  };
+}
+
+@Component()
+class FrameMod3Comp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(FrameMod3Comp)
+class Every3rdFrameSystem extends SystemImpl {
+  static depth = 0;
+  static frameMod = 3;
+  static frameModOffset = 0;
+  run = (world: World, eid: number) => {
+    world(FrameMod3Comp, eid).runCount += 1;
+  };
+}
+
+@Component()
+class FrameModOffsetComp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(FrameModOffsetComp)
+class OffsetSystem extends SystemImpl {
+  static depth = 0;
+  static frameMod = 2;
+  static frameModOffset = 1;
+  run = (world: World, eid: number) => {
+    world(FrameModOffsetComp, eid).runCount += 1;
+  };
+}
+
+@Component()
+class DrawFrameModOffsetComp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(DrawFrameModOffsetComp)
+class DrawOffsetSystem extends DrawSystemImpl {
+  static depth = 0;
+  static frameMod = 2;
+  static frameModOffset = 1;
+  run = (world: ReadOnlyWorld, eid: number) => {
+    (world as World)(DrawFrameModOffsetComp, eid).runCount += 1;
+  };
+}
+
+@Component()
+class FrameMod60Comp extends Schema {
+  @type("number")
+  @defaultValue(0)
+  runCount: number;
+}
+
+@System(FrameMod60Comp)
+class Every60thFrameSystem extends SystemImpl {
+  static depth = 0;
+  static frameMod = 60;
+  static frameModOffset = 0;
+  run = (world: World, eid: number) => {
+    world(FrameMod60Comp, eid).runCount += 1;
+  };
+}
+
 describe("stepWorldTiming", () => {
   test("stepWorldTiming runs systems and populates world.timing", () => {
     const world = createWorld();
@@ -146,11 +250,13 @@ describe("stepWorldTiming", () => {
     addComponent(world, TimingComp, eid);
 
     stepWorldTiming(world);
+    expect(world(TimingComp, eid).val).toBe(1);
     const firstTiming = world.timing!.systems.find((s) => s.name === "TimingSystem");
     expect(firstTiming).toBeDefined();
     const firstCalls = firstTiming!.totalCalls;
 
     stepWorldTiming(world);
+    expect(world(TimingComp, eid).val).toBe(2);
     const secondTiming = world.timing!.systems.find((s) => s.name === "TimingSystem");
     expect(secondTiming).toBeDefined();
     // Should be fresh, not accumulated from previous step
@@ -208,6 +314,27 @@ describe("stepWorldTiming", () => {
     expect(worldSystemTiming).toBeDefined();
   });
 
+  test("wrapped runAll falls back to original when world timing is missing", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, TimingComp, eid);
+
+    // First call enables timing and installs the runAll wrapper.
+    stepWorldTiming(world);
+    const system = getSystem(world, TimingSystem);
+    const callsBefore = system.timing!.totalCalls;
+    expect(world(TimingComp, eid).val).toBe(1);
+
+    // Keep wrapper installed, but remove world timing to force wrapper fallback path.
+    world.timing = null;
+    system.runAll(world);
+
+    // Fallback should still execute original runAll.
+    expect(world(TimingComp, eid).val).toBe(2);
+    // No timing should be recorded while world.timing is null.
+    expect(system.timing!.totalCalls).toBe(callsBefore);
+  });
+
   test("frame increments with stepWorldTiming", () => {
     const world = createWorld();
     expect(world.frame).toBe(0);
@@ -242,5 +369,140 @@ describe("stepWorldTiming", () => {
     expect(systemTiming!.name).toBe("CustomRunAllSystem");
     expect(systemTiming!.totalCalls).toBe(1);
     expect(systemTiming!.totalTime).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("frameMod and frameModOffset", () => {
+  test("system with frameMod=1 runs every frame", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameModComp, eid);
+
+    for (let i = 0; i < 10; i++) {
+      stepWorld(world);
+    }
+
+    expect(world(FrameModComp, eid).runCount).toBe(10);
+  });
+
+  test("system with frameMod=2 runs every other frame", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameMod2Comp, eid);
+
+    for (let i = 0; i < 10; i++) {
+      stepWorld(world);
+    }
+
+    // Runs on frames 1, 3, 5, 7, 9 = 5 times
+    expect(world(FrameMod2Comp, eid).runCount).toBe(5);
+  });
+
+  test("system with frameMod=3 runs every 3rd frame", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameMod3Comp, eid);
+
+    for (let i = 0; i < 9; i++) {
+      stepWorld(world);
+    }
+
+    // Runs on frames 1, 4, 7 = 3 times
+    expect(world(FrameMod3Comp, eid).runCount).toBe(3);
+  });
+
+  test("system with frameModOffset=1 starts on frame 2", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameModOffsetComp, eid);
+
+    // After 1 step (frame 1), offset system should not have run
+    stepWorld(world);
+    expect(world(FrameModOffsetComp, eid).runCount).toBe(0);
+
+    // After 2 steps (frame 2), offset system should have run once
+    stepWorld(world);
+    expect(world(FrameModOffsetComp, eid).runCount).toBe(1);
+
+    // After 10 steps total, runs on frames 2, 4, 6, 8, 10 = 5 times
+    for (let i = 0; i < 8; i++) {
+      stepWorld(world);
+    }
+    expect(world(FrameModOffsetComp, eid).runCount).toBe(5);
+  });
+
+  test("draw system with frameModOffset=1 starts on draw frame 2", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, DrawFrameModOffsetComp, eid);
+    world.frame = 1;
+
+    // Draw frame 1: should not run
+    stepWorldDraw(world);
+    expect(world(DrawFrameModOffsetComp, eid).runCount).toBe(0);
+
+    world.frame += 1; // Manually increment frame to simulate the passage of time between draw calls
+    // Draw frame 2: first run
+    stepWorldDraw(world);
+    expect(world(DrawFrameModOffsetComp, eid).runCount).toBe(1);
+
+    // Draw frames 3-10: additional runs on 4, 6, 8, 10
+    for (let i = 0; i < 8; i++) {
+      world.frame += 1; // Increment frame for each draw step
+      stepWorldDraw(world);
+    }
+    expect(world(DrawFrameModOffsetComp, eid).runCount).toBe(5);
+  });
+
+  test("system with frameMod=60 runs once every 60 frames", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameMod60Comp, eid);
+
+    // After 59 frames, should have run once (on frame 1)
+    for (let i = 0; i < 59; i++) {
+      stepWorld(world);
+    }
+    expect(world(FrameMod60Comp, eid).runCount).toBe(1);
+
+    // After 60 frames, should still be 1
+    stepWorld(world);
+    expect(world(FrameMod60Comp, eid).runCount).toBe(1);
+
+    // After 61 frames, should be 2 (ran on frame 61)
+    stepWorld(world);
+    expect(world(FrameMod60Comp, eid).runCount).toBe(2);
+  });
+
+  test("frameMod works with stepWorldTiming", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameMod2Comp, eid);
+
+    for (let i = 0; i < 10; i++) {
+      stepWorldTiming(world);
+    }
+
+    // Runs on frames 1, 3, 5, 7, 9 = 5 times
+    expect(world(FrameMod2Comp, eid).runCount).toBe(5);
+  });
+
+  test("multiple systems can have different frameMod values to spread load", () => {
+    const world = createWorld();
+    const eid = addEntity(world);
+    addComponent(world, FrameModComp, eid);
+    addComponent(world, FrameMod2Comp, eid);
+    addComponent(world, FrameModOffsetComp, eid);
+
+    for (let i = 0; i < 10; i++) {
+      stepWorld(world);
+    }
+
+    // EveryFrameSystem: 10 times
+    expect(world(FrameModComp, eid).runCount).toBe(10);
+    // EveryOtherFrameSystem (offset 0): frames 1,3,5,7,9 = 5 times
+    expect(world(FrameMod2Comp, eid).runCount).toBe(5);
+    // OffsetSystem (frameMod=2, offset=1): frames 2,4,6,8,10 = 5 times
+    expect(world(FrameModOffsetComp, eid).runCount).toBe(5);
   });
 });
