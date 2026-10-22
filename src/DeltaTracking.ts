@@ -13,18 +13,35 @@ type DeltaDirtyState = {
   dirtyProps: Map<Store, DirtyBucket>;
 };
 
+const $deltaHolder = Symbol("deltaHolder");
+
+/**
+ * Plain, stable-shaped holder for the tracking state. The world itself is a function object with
+ * many properties (dictionary mode), so component setters check `holder.state` instead of doing a
+ * hash lookup on the world for every write.
+ */
+export type DeltaHolder = { state: DeltaDirtyState | undefined };
+
 type TrackableWorld = World & {
   [$deltaDirtyState]?: DeltaDirtyState;
+  [$deltaHolder]?: DeltaHolder;
+};
+
+export const getDeltaHolder = (world: World): DeltaHolder => {
+  const trackableWorld = world as TrackableWorld;
+  return trackableWorld[$deltaHolder] || (trackableWorld[$deltaHolder] = { state: trackableWorld[$deltaDirtyState] });
 };
 
 export const getState = (world: World): DeltaDirtyState | undefined => {
-  return (world as TrackableWorld)[$deltaDirtyState];
+  return getDeltaHolder(world).state;
 };
 
 export const activateDeltaDirtyTracking = (world: World) => {
-  const trackableWorld = world as TrackableWorld;
-  if (!trackableWorld[$deltaDirtyState]) {
-    trackableWorld[$deltaDirtyState] = { dirtyProps: new Map<Store, DirtyBucket>() };
+  const holder = getDeltaHolder(world);
+  if (!holder.state) {
+    holder.state = { dirtyProps: new Map<Store, DirtyBucket>() };
+    // Mirrored on the world for anything that still reads the symbol directly.
+    (world as TrackableWorld)[$deltaDirtyState] = holder.state;
   }
 };
 

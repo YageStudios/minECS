@@ -18,6 +18,7 @@ export const $subarrayFrom = Symbol("subarrayFrom");
 export const $subarrayTo = Symbol("subarrayTo");
 export const $parentArray = Symbol("parentArray");
 export const $tagStore = Symbol("tagStore");
+export const $fauxStore = Symbol("fauxStore");
 
 export const $queryShadow: unique symbol = Symbol("queryShadow");
 export const $serializeShadow = Symbol("serializeShadow");
@@ -46,6 +47,7 @@ export type Store = Array<any> & {
   [$subarray]: boolean;
   [$parentArray]: any;
   [$tagStore]: boolean;
+  [$fauxStore]: boolean;
   [$isEidType]: boolean;
   [$indexType]: string;
   [$indexBytes]: number;
@@ -86,13 +88,33 @@ export const createShadow = (store: Store, key: number | symbol) => {
   }
 };
 
+const indexTypeFor = (length: number) =>
+  (length <= UNSIGNED_MAX.uint8
+    ? TYPES_ENUM.ui8
+    : length <= UNSIGNED_MAX.uint16
+      ? TYPES_ENUM.ui16
+      : TYPES_ENUM.ui32) as keyof typeof TYPES_ENUM;
+
+const setIndexMeta = (store: any, indexType: keyof typeof TYPES_ENUM) => {
+  store[$indexType] = TYPES_NAMES[indexType];
+  store[$indexBytes] = TYPES[indexType].BYTES_PER_ELEMENT;
+  store[$subarray] = true;
+};
+
+const sliceSubarrays = (store: Store, storeSize: number, length: number) => {
+  const parent = store[$parentArray];
+  store.length = storeSize;
+  for (let eid = 0; eid < storeSize; eid++) {
+    const start = length * eid;
+    store[eid] = parent.subarray(start, start + length);
+  }
+};
+
 const resizeSubarray = (metadata: MetaData, store: Store, storeSize: number) => {
   const cursors = metadata[$subarrayCursors];
   const type = store[$storeType] as keyof typeof TYPES;
   const length = store[0].length;
-  const indexType = (
-    length <= UNSIGNED_MAX.uint8 ? TYPES_ENUM.ui8 : length <= UNSIGNED_MAX.uint16 ? TYPES_ENUM.ui16 : TYPES_ENUM.ui32
-  ) as keyof typeof TYPES_ENUM;
+  const indexType = indexTypeFor(length);
 
   if (cursors[type] === 0) {
     const arrayElementCount = metadata[$storeArrayElementCounts][type];
@@ -112,22 +134,17 @@ const resizeSubarray = (metadata: MetaData, store: Store, storeSize: number) => 
   cursors[type] = end;
 
   store[$parentArray] = metadata[$storeSubarrays][type].subarray(start, end);
-
-  // pre-generate subarrays for each eid
-  for (let eid = 0; eid < storeSize; eid++) {
-    const start = length * eid;
-    const end = start + length;
-    store[eid] = store[$parentArray].subarray(start, end);
-    store[eid][$indexType] = TYPES_NAMES[indexType];
-    store[eid][$indexBytes] = TYPES[indexType].BYTES_PER_ELEMENT;
-    store[eid][$subarray] = true;
-  }
+  setIndexMeta(store, indexType);
+  sliceSubarrays(store, storeSize, length);
 };
 
 const resizeRecursive = (metadata: MetaData, store: Store, size: number) => {
   Object.keys(store).forEach((key) => {
     const ta = store[key];
-    if (Array.isArray(ta)) {
+    if (Array.isArray(ta) && ta[$fauxStore]) {
+      ta.length = size;
+      store[$storeFlattened].push(ta);
+    } else if (Array.isArray(ta)) {
       resizeSubarray(metadata, ta as unknown as Store, size);
       store[$storeFlattened].push(ta);
     } else if (ArrayBuffer.isView(ta)) {
@@ -152,8 +169,8 @@ export const resizeStore = (store: Store, size: number) => {
 export const resetStore = (store: Store) => {
   if (store[$storeFlattened]) {
     store[$storeFlattened].forEach((ta) => {
-      if (ta._data) {
-        ta._data = {};
+      if (ta[$fauxStore]) {
+        ta.fill(undefined);
       } else if (!ta[$parentArray]) {
         ta.fill(0);
       }
@@ -171,8 +188,8 @@ export const resetStoreFor = (store: Store, eid: number) => {
   if (flattened) {
     for (let i = 0; i < flattened.length; i++) {
       const ta = flattened[i];
-      if (ta._data) {
-        delete ta._data[eid];
+      if (ta[$fauxStore]) {
+        ta[eid] = undefined;
       } else if (ArrayBuffer.isView(ta)) (ta as any)[eid] = 0;
       else ta[eid].fill(0);
     }
@@ -191,17 +208,16 @@ export const parentArray = (store: Store) => store[$parentArray];
 
 const createArrayStore = (metadata: MetaData, type: keyof typeof TYPES, length: number) => {
   const storeSize = metadata[$storeSize];
-  const store = Array(storeSize).fill(0) as unknown as Store;
+  const store = new Array(storeSize) as unknown as Store;
   store[$storeType] = type;
   store[$isEidType] = type === TYPES_ENUM.eid;
 
   const cursors = metadata[$subarrayCursors];
-  const indexType = (
-    length <= UNSIGNED_MAX.uint8 ? TYPES_ENUM.ui8 : length <= UNSIGNED_MAX.uint16 ? TYPES_ENUM.ui16 : TYPES_ENUM.ui32
-  ) as keyof typeof TYPES_ENUM;
 
   if (!length) throw new Error("minECS - Must define component array length");
   if (!TYPES[type]) throw new Error(`minECS - Invalid component array property type ${type}`);
+
+  const indexType = indexTypeFor(length);
 
   // create buffer for type if it does not already exist
   if (!metadata[$storeSubarrays][type]) {
@@ -224,44 +240,40 @@ const createArrayStore = (metadata: MetaData, type: keyof typeof TYPES, length: 
   cursors[type] = end;
 
   store[$parentArray] = metadata[$storeSubarrays][type].subarray(start, end);
-
-  // pre-generate subarrays for each eid
-  for (let eid = 0; eid < storeSize; eid++) {
-    const start = length * eid;
-    const end = start + length;
-    store[eid] = store[$parentArray].subarray(start, end);
-    store[eid][$indexType] = TYPES_NAMES[indexType];
-    store[eid][$indexBytes] = TYPES[indexType].BYTES_PER_ELEMENT;
-    store[eid][$subarray] = true;
-  }
+  setIndexMeta(store, indexType);
+  // pre-generate subarrays for each eid (index metadata lives on the column, not on each subarray)
+  sliceSubarrays(store, storeSize, length);
 
   return store;
 };
 
+const createCursors = () => {
+  const cursors: { [key: string]: number } = {};
+  const keys = Object.keys(TYPES);
+  for (let i = 0; i < keys.length; i++) cursors[keys[i]] = 0;
+  return cursors;
+};
+
 const isArrayType = (x: any) => Array.isArray(x) && typeof x[0] === "string" && typeof x[1] === "number";
 
+// Plain per-eid array for string/object/array/nullable properties (previously a Proxy over a dictionary).
 export const FauxStore = (key: string, store: Store) => {
-  const fauxStore = {
-    [$storeBase]: store[$storeBase],
-    _data: {},
-    _key: key,
-  };
-  return new Proxy(fauxStore, {
-    set: (target: any, key, value) => {
-      if (key === "_data") {
-        target._data = value;
-        return true;
-      }
-      target._data[key] = value;
-      return true;
-    },
-    get: (target: any, key) => {
-      if (key === "_data") return target._data;
-      if (key === "_key") return target._key;
-      if (typeof key === "symbol") return target[key];
-      return target._data[key];
-    },
-  });
+  const fauxStore = new Array(store[$storeSize] ?? 0) as unknown as Store;
+  fauxStore[$storeBase] = store[$storeBase];
+  fauxStore[$fauxStore] = true;
+  (fauxStore as any)._key = key;
+  return fauxStore;
+};
+
+const cloneSchema = (schema: any): any => {
+  if (Array.isArray(schema)) return schema.slice();
+  if (schema && typeof schema === "object") {
+    const out: any = {};
+    const keys = Object.keys(schema);
+    for (let i = 0; i < keys.length; i++) out[keys[i]] = cloneSchema(schema[keys[i]]);
+    return out;
+  }
+  return schema;
 };
 
 export const createStore = (schema: any, size: number): Store => {
@@ -278,7 +290,7 @@ export const createStore = (schema: any, size: number): Store => {
     return stores[$store];
   }
 
-  schema = JSON.parse(JSON.stringify(schema));
+  schema = cloneSchema(schema);
 
   const arrayElementCounts: {
     [key: string]: number;
@@ -301,7 +313,7 @@ export const createStore = (schema: any, size: number): Store => {
     [$storeMaps]: {},
     [$storeSubarrays]: {},
     [$storeRef]: $store,
-    [$subarrayCursors]: Object.keys(TYPES).reduce((a, type) => ({ ...a, [type]: 0 }), {}),
+    [$subarrayCursors]: createCursors(),
     [$storeFlattened]: [],
     [$storeArrayElementCounts]: arrayElementCounts,
     [$storeBase]: () => stores[$store],

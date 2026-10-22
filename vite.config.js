@@ -16,7 +16,7 @@ export default defineConfig({
       fileName: "minecs",
     },
     rollupOptions: {
-      external: ["ajv", "lodash", "toposort"],
+      external: ["ajv", /^lodash(\/|$)/, "toposort"],
     },
   },
   plugins: [

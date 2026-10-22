@@ -15,10 +15,6 @@ export type SerializedQuery = {
     dense: number[];
     sparse: number[];
   };
-  entered: {
-    dense: number[];
-    sparse: number[];
-  };
 };
 
 export const TYPES = {
@@ -165,7 +161,6 @@ export type WorldComponent<T extends Schema = any> = {
   queries: Query[];
   store: SchemaStore<T>;
   schema: typeof Schema;
-  changedQueries: Set<Query>;
   proxies: (T | null)[];
   booleanKeys: Set<string> | null;
 };
@@ -215,7 +210,6 @@ export const isQuery = (query: any): query is Query => {
 
 export type Query = ReturnType<typeof SparseSet> & {
   toRemove: ReturnType<typeof SparseSet>;
-  entered: ReturnType<typeof SparseSet>;
   generations: number[];
   masks: {
     [key: number]: number;

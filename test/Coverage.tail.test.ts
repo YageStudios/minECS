@@ -242,9 +242,8 @@ describe("Deserialize remaining sparse/null union paths", () => {
     q(world);
 
     const qInst = world.queryMap.get("TailScalar")!;
-    qInst.reset([eid, -1], [0, -1]);
-    qInst.toRemove.reset([-1], [-1]);
-    qInst.entered.reset([-1], [-1]);
+    qInst.reset([eid, -1]);
+    qInst.toRemove.reset([-1]);
 
     const buffer = serializeWorld(SerialMode.BINARY, world);
     const clone = createWorld();
@@ -252,7 +251,8 @@ describe("Deserialize remaining sparse/null union paths", () => {
 
     const cloneQ = clone.queryMap.get("TailScalar")!;
     expect(cloneQ.dense.includes(-1)).toBe(true);
-    expect(cloneQ.sparse.includes(-1)).toBe(true);
+    expect(cloneQ.has(eid)).toBe(true);
+    expect(Array.from(cloneQ.toRemove.dense)).toEqual([-1]);
   });
 
   test("json query sparse-set maps -1 values through deserializeSparseSet", () => {
@@ -268,14 +268,13 @@ describe("Deserialize remaining sparse/null union paths", () => {
     query.sparse = [-1];
     query.toRemove.dense = [-1];
     query.toRemove.sparse = [-1];
-    query.entered.dense = [-1];
-    query.entered.sparse = [-1];
 
     const clone = createWorld();
     deserializeWorld(json, clone);
     const cloneQ = clone.queryMap.get("TailScalar")!;
     expect(cloneQ.dense[0]).toBeNull();
-    expect(cloneQ.sparse[0]).toBeNull();
+    expect(cloneQ.toRemove.dense[0]).toBeNull();
+    expect(cloneQ.has(eid)).toBe(false);
   });
 
   test("deserializeFromBuffer recreates extra entity mask generations", () => {
@@ -441,20 +440,20 @@ describe("Serialize remaining scalar/faux delta branches", () => {
     expect(second.byteLength).toBeLessThan(first.byteLength);
   });
 
-  test("json serialization includes query sparse-set/toRemove/entered payload", () => {
+  test("json serialization includes query sparse-set/toRemove payload", () => {
     const world = createWorld();
     const eid = addEntity(world);
     addComponent(world, TailScalar, eid, { n: 8 });
     const q = defineQuery([TailScalar]);
     q(world);
     const qInst = world.queryMap.get("TailScalar")!;
-    qInst.reset([eid, null as unknown as number], [0, null as unknown as number]);
-    qInst.toRemove.reset([eid], [0]);
-    qInst.entered.reset([eid], [0]);
+    qInst.reset([eid, null as unknown as number]);
+    qInst.toRemove.reset([eid]);
 
     const json = serializeWorld(SerialMode.JSON, world);
+    expect(json.queryMap["TailScalar"].dense.includes(eid)).toBe(true);
+    expect(json.queryMap["TailScalar"].sparse[eid]).toBe(0);
     expect(json.queryMap["TailScalar"].toRemove.dense.includes(eid)).toBe(true);
-    expect(json.queryMap["TailScalar"].entered.dense.includes(eid)).toBe(true);
   });
 
   test("binary serialization writes null sparse-set entries via nullish fallback", () => {
@@ -466,9 +465,8 @@ describe("Serialize remaining scalar/faux delta branches", () => {
     const qInst = world.queryMap.get("TailScalar")!;
     const nullEntry = null as unknown as number;
 
-    qInst.reset([eid, nullEntry], [0, nullEntry]);
-    qInst.toRemove.reset([nullEntry], [nullEntry]);
-    qInst.entered.reset([nullEntry], [nullEntry]);
+    qInst.reset([eid, nullEntry]);
+    qInst.toRemove.reset([nullEntry]);
 
     const buffer = serializeWorld(SerialMode.BINARY, world);
     expect(buffer.byteLength).toBeGreaterThan(0);
@@ -569,7 +567,6 @@ describe("World remaining branches", () => {
     const cleanupSystem = getSystem(world, TailCleanupSystemBC);
     const qInst = Object.assign(SparseSet(), {
       toRemove: SparseSet(),
-      entered: SparseSet(),
       queryKey: "TailSyntheticAddMiss",
       generations: [bComp.generationId],
       masks: {
@@ -594,7 +591,6 @@ describe("World remaining branches", () => {
     const aComp = world(TailA);
     const qInst = Object.assign(SparseSet(), {
       toRemove: SparseSet(),
-      entered: SparseSet(),
       queryKey: "TailSyntheticRemoveMiss",
       generations: [aComp.generationId],
       masks: {
@@ -621,7 +617,6 @@ describe("World remaining branches", () => {
 
     const qAA = Object.assign(SparseSet(), {
       toRemove: SparseSet(),
-      entered: SparseSet(),
       queryKey: "TailSyntheticRemoveMatch",
       generations: [],
       masks: {},

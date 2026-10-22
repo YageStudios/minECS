@@ -71,7 +71,9 @@ describe("createStore", () => {
     // Each eid gets a subarray of length 4
     expect(store.items[0].length).toBe(4);
     expect(store.items[5].length).toBe(4);
-    expect(store.items[0][$subarray]).toBe(true);
+    // Subarray metadata lives on the column, not on each per-eid view
+    expect(store.items[$subarray]).toBe(true);
+    expect(store.items[0][$subarray]).toBeUndefined();
   });
 
   test("array store with eid type", () => {
@@ -125,11 +127,13 @@ describe("FauxStore", () => {
     expect(faux[1]).toBe("world");
   });
 
-  test("_data returns internal data object", () => {
+  test("stores values per eid without a backing dictionary", () => {
     const baseStore = createStore(null, 10);
     const faux = FauxStore("test", baseStore);
     faux[5] = "val";
-    expect(faux._data).toEqual({ 5: "val" });
+    expect(faux[5]).toBe("val");
+    expect(faux[4]).toBeUndefined();
+    expect(Array.isArray(faux)).toBe(true);
   });
 
   test("_key returns the key name", () => {
@@ -138,11 +142,11 @@ describe("FauxStore", () => {
     expect(faux._key).toBe("myKey");
   });
 
-  test("setting _data replaces entire data object", () => {
+  test("overwriting a value replaces it", () => {
     const baseStore = createStore(null, 10);
     const faux = FauxStore("k", baseStore);
     faux[0] = "old";
-    faux._data = { 0: "new" };
+    faux[0] = "new";
     expect(faux[0]).toBe("new");
   });
 
@@ -165,8 +169,7 @@ describe("resetStore", () => {
     expect(store.y[3]).toBe(0);
   });
 
-  test("clears FauxStore _data", () => {
-    // FauxStore has _data property
+  test("clears FauxStore values", () => {
     const baseStore = createStore(null, 10);
     const faux = FauxStore("label", baseStore);
     faux[0] = "test";
@@ -175,7 +178,7 @@ describe("resetStore", () => {
     baseStore[$storeFlattened].push(faux);
     resetStore(baseStore);
 
-    expect(faux._data).toEqual({});
+    expect(faux[0]).toBeUndefined();
   });
 
   test("no-op on store without flattened", () => {

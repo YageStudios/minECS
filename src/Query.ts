@@ -12,6 +12,9 @@ import { getEntityCursor } from "./World";
 
 export const queryMap = new Map<string, QueryInstance>();
 
+// Creation order of a query within its world; used to keep cleanup ordering stable in removeEntity.
+export const $queryOrder = Symbol("queryOrder");
+
 export const defineQuery = (components: (typeof Schema)[]) => {
   const $query = components
     .map((c) => c.type)
@@ -51,9 +54,9 @@ export const defineQuery = (components: (typeof Schema)[]) => {
       generations,
       masks,
       toRemove: SparseSet(),
-      entered: SparseSet(),
       queryKey: $query,
     });
+    (query as any)[$queryOrder] = world.queries.size;
     world["queryMap"].set($query, query);
     world.queries.add(query);
 
@@ -71,10 +74,11 @@ export const defineQuery = (components: (typeof Schema)[]) => {
   };
 
   const q = (world: World) => {
-    if (!world["queryMap"].has($query)) {
-      world["queryMap"].set($query, createQuery(world));
+    let q = world["queryMap"].get($query);
+    if (!q) {
+      q = createQuery(world);
+      world["queryMap"].set($query, q);
     }
-    const q = world["queryMap"].get($query)!;
 
     commitRemovals(world);
 
@@ -105,16 +109,13 @@ export const commitRemovals = (world: World) => {
 };
 
 export const queryRemoveEntity = (world: World, q: Query, eid: number): boolean => {
-  if (!q.has(eid) || q.toRemove.has(eid)) return false;
-  q.toRemove.add(eid);
+  if (!q.has(eid) || !q.toRemove.add(eid)) return false;
   world["dirtyQueries"].add(q);
   return true;
 };
 
 export const queryAddEntity = (q: Query, eid: number) => {
   q.toRemove.remove(eid);
-  // if (!q.has(eid))
-  q.entered.add(eid);
   return q.add(eid);
 };
 

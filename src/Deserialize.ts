@@ -3,13 +3,30 @@
 import { Base64 } from "js-base64";
 
 import type { Schema } from "./Schema";
-import { NULL_FLAG, SERIALIZER_VERSION, UNDEFINED_FLAG } from "./Serialize";
+import {
+  INDEX_IO,
+  NULL_FLAG,
+  SERIALIZER_VERSION,
+  UNDEFINED_FLAG,
+  readLatin1,
+  typedIOFor,
+  type TypedIO,
+} from "./Serialize";
 import { SparseSet } from "./SparseSet";
 import type { Store } from "./Storage";
-import { $indexBytes, $indexType, $storeBase, $storeFlattened, resetStore } from "./Storage";
+import { $indexBytes, $indexType, $parentArray, $storeBase, $storeFlattened, $tagStore, resetStore } from "./Storage";
 import type { Query, SerializedQuery, SerializedWorld, World, WorldComponent } from "./Types";
 import { componentKeyMap, componentList } from "./Component";
-import { getComponentSchema, hasComponent, addComponent, sortComponentQueries, createWorld } from "./World";
+import {
+  getComponentSchema,
+  hasComponent,
+  addComponent,
+  sortComponentQueries,
+  createWorld,
+  prepareWorldComponent,
+  rebuildComponentBitTable,
+} from "./World";
+import { $queryOrder } from "./Query";
 
 function reviver(key: string, value: any) {
   if (typeof value === "object" && value !== null) {
@@ -23,41 +40,43 @@ function reviver(key: string, value: any) {
   return value;
 }
 
+type ValueConfig = {
+  type: string;
+  properties?: {
+    [key: string]: { type: string; key: string; properties?: any; items?: any };
+  };
+  items?: any;
+};
+
+const configType = (config: ValueConfig): string =>
+  Array.isArray(config.type) ? (config.type as string[]).filter((t) => t !== "null").join("|") : config.type;
+
 const deserializeValue = (
   where: number,
   eid: number,
   view: DataView,
+  bytes: Uint8Array,
   key: string,
-  config: {
-    type: string;
-    properties?: {
-      [key: string]: { type: string; key: string; properties?: any; items?: any };
-    };
-    items?: any;
-  },
+  config: ValueConfig,
   complexData: any
 ): [number, any] => {
-  if (view.getUint8(where) === NULL_FLAG) {
+  const flag = view.getUint8(where);
+  if (flag === NULL_FLAG) {
     return [where + 1, null];
   }
-  if (view.getUint8(where) === UNDEFINED_FLAG) {
+  if (flag === UNDEFINED_FLAG) {
     return [where + 1, undefined];
   }
   where += 1;
 
-  const type = Array.isArray(config.type) ? config.type.filter((t) => t !== "null").join("|") : config.type;
+  const type = configType(config);
 
   switch (type) {
     case "string": {
       const length = view.getUint8(where);
       where += 1;
-
-      let str = "";
-      for (let i = 0; i < length; i++) {
-        str += String.fromCharCode(view.getUint8(where));
-        where += 1;
-      }
-
+      const str = readLatin1(bytes, where, length);
+      where += length;
       return [where, str];
     }
     case "array": {
@@ -66,7 +85,7 @@ const deserializeValue = (
       const array = new Array(count);
       for (let i = 0; i < count; i++) {
         let value = undefined;
-        [where, value] = deserializeValue(where, eid, view, "index", config.items, complexData);
+        [where, value] = deserializeValue(where, eid, view, bytes, "index", config.items, complexData);
         array[i] = value;
       }
 
@@ -92,14 +111,14 @@ const deserializeValue = (
       ) {
         return [where, complexData[key]];
       } else {
-        Object.keys(config.properties).forEach((i) => {
-          const key = i;
-          const prop = config.properties![i];
-
+        const properties = config.properties;
+        const keys = Object.keys(properties);
+        for (let i = 0; i < keys.length; i++) {
+          const propKey = keys[i];
           let value = undefined;
-          [where, value] = deserializeValue(where, eid, view, key, prop, complexData?.[key]);
-          objectValue[key] = value;
-        });
+          [where, value] = deserializeValue(where, eid, view, bytes, propKey, properties[propKey], complexData?.[propKey]);
+          objectValue[propKey] = value;
+        }
       }
       return [where, objectValue];
     }
@@ -108,34 +127,24 @@ const deserializeValue = (
   }
 };
 
-const deserializeProp = (
+const deserializeFauxProp = (
   where: number,
   eid: number,
   view: DataView,
+  bytes: Uint8Array,
   prop: any,
-  type: string,
-  schema: typeof Schema,
+  key: string,
+  config: ValueConfig,
   complexData: undefined | any
-): any => {
-  if (type !== "Object") {
-    // @ts-ignore
-    const value = view[`get${type}`](where);
-    where += prop.BYTES_PER_ELEMENT;
-
-    prop[eid] = value;
-    return where;
-  }
-
-  const config = schema.schema.properties[prop._key];
-  let value = undefined;
-
+): number => {
   if (complexData) {
     where += 1;
     prop[eid] = JSON.parse(complexData, reviver);
     return where;
   }
 
-  [where, value] = deserializeValue(where, eid, view, prop._key, config, undefined);
+  let value = undefined;
+  [where, value] = deserializeValue(where, eid, view, bytes, key, config, undefined);
   if (value !== undefined) {
     prop[eid] = value;
   }
@@ -143,8 +152,10 @@ const deserializeProp = (
   return where;
 };
 
-const deserializeEntityBuffer = (world: World, where: number, view: DataView) => {
-  const deserializedEntities = new Set();
+type PropKind = 0 | 1 | 2 | 3; // tag | subarray | typed | faux
+
+const deserializeEntityBuffer = (world: World, where: number, view: DataView, bytes: Uint8Array) => {
+  const deserializedEntities = new Set<number>();
   const componentProps: Store[] = [];
   world["componentMap"].forEach((c) => {
     if (c.store[$storeFlattened].length) componentProps.push(...c.store[$storeFlattened]);
@@ -156,11 +167,8 @@ const deserializeEntityBuffer = (world: World, where: number, view: DataView) =>
   const complexWhere = where + entitySize + 4;
   const complexSize = view.getUint32(where + entitySize);
 
-  let complexDataString = "";
-  for (let i = 0; i < complexSize; i++) {
-    complexDataString += String.fromCharCode(view.getUint8(complexWhere + i));
-  }
-  const complexEntityData = JSON.parse(complexDataString, reviver);
+  const complexEntityData = JSON.parse(readLatin1(bytes, complexWhere, complexSize), reviver);
+  const entityMasks = world["entityMasks"];
 
   while (where < complexWhere - 4) {
     // pid
@@ -171,60 +179,76 @@ const deserializeEntityBuffer = (world: World, where: number, view: DataView) =>
     const entityCount = view.getUint32(where);
     where += 4;
 
-    // component property
-    const prop = componentProps[pid];
+    // component property and its per-column invariants (hoisted out of the entity loop)
+    const prop: any = componentProps[pid];
+    const store = prop[$storeBase]();
+    const component = getComponentSchema(world, store);
+    const schema = component.schema;
+    const componentType = component.type;
+    const worldComponent = world["componentMap"].get(schema);
+    const masks = worldComponent ? entityMasks[worldComponent.generationId] : null;
+    const bitflag = worldComponent ? worldComponent.bitflag : 0;
+    const isTagComponent = store[$storeFlattened].length === 0;
+
+    const kind: PropKind = prop[$tagStore]
+      ? 0
+      : Array.isArray(prop) && (prop as any)[$parentArray]
+        ? 1
+        : ArrayBuffer.isView(prop)
+          ? 2
+          : 3;
+    const elementIO: TypedIO | null = kind === 1 ? typedIOFor(prop[$parentArray]) : kind === 2 ? typedIOFor(prop) : null;
+    const indexIO: TypedIO | null = kind === 1 ? INDEX_IO[prop[$indexType] as string] : null;
+    const indexBytes: number = kind === 1 ? prop[$indexBytes] : 0;
+    const fauxKey: string = kind === 3 ? prop._key : "";
+    const fauxConfig: ValueConfig = kind === 3 ? schema.schema.properties[fauxKey] : null;
 
     // Get the entities and set their prop values
     for (let i = 0; i < entityCount; i++) {
       const eid = view.getUint32(where); // throws with [changed, c, changed]
       where += 4;
 
-      const store = prop[$storeBase]();
-      const component = getComponentSchema(world, store);
-      const schema = component.schema;
-
-      if (!hasComponent(world, schema, eid)) {
-        addComponent(world, schema, eid, false);
+      const isMember = masks ? (masks[eid] & bitflag) === bitflag : hasComponent(world, schema, eid);
+      if (!isMember) {
+        addComponent(world, schema, eid);
       }
       // add eid to deserialized ents after it has been transformed by MAP mode
       deserializedEntities.add(eid);
 
-      if (store[$storeFlattened].length === 0) {
+      if (isTagComponent) {
         continue;
       }
 
-      if (ArrayBuffer.isView(prop[eid])) {
+      if (kind === 1) {
         const array = prop[eid];
-        // @ts-ignore
-        const count = view[`get${array[$indexType]}`](where);
-        // @ts-ignore
-        where += array[$indexBytes];
+        const idxIO = indexIO!;
+        const elemIO = elementIO!;
+        const elemBytes = elemIO.bytes;
+        const count = idxIO.read(view, where);
+        where += indexBytes;
 
         // iterate over count
-        for (let i = 0; i < count; i++) {
-          // @ts-ignore
-          const index = view[`get${array[$indexType]}`](where);
-          // @ts-ignore
-          where += array[$indexBytes];
+        for (let j = 0; j < count; j++) {
+          const index = idxIO.read(view, where);
+          where += indexBytes;
 
-          const value =
-            // @ts-ignore
-            view[`get${array.constructor.name.replace("Array", "")}`](where);
-          // @ts-ignore
-          where += array.BYTES_PER_ELEMENT;
-          // @ts-ignore
-          prop[eid][index] = value;
+          array[index] = elemIO.read(view, where);
+          where += elemBytes;
         }
+      } else if (kind === 2) {
+        const elemIO = elementIO!;
+        prop[eid] = elemIO.read(view, where);
+        where += elemIO.bytes;
       } else {
-        const type = prop.constructor.name.replace("Array", "");
-        where = deserializeProp(
+        where = deserializeFauxProp(
           where,
           eid,
           view,
+          bytes,
           prop,
-          type,
-          schema,
-          complexEntityData[eid]?.[component.type]?.[(prop as any)._key]
+          fauxKey,
+          fauxConfig,
+          complexEntityData[eid]?.[componentType]?.[fauxKey]
         );
       }
     }
@@ -241,36 +265,22 @@ const deserializeSparseSetFromBuffer = (where: number, view: DataView): [number,
 
   const denseLength = view.getUint16(where);
   where += 2;
+  const dense: number[] = new Array(denseLength);
   for (let i = 0; i < denseLength; i++) {
-    set.dense.push(view.getUint16(where));
-    if (set.dense[i] === 65535) set.dense[i] = -1;
+    const value = view.getUint16(where);
+    dense[i] = value === 65535 ? -1 : value;
     where += 2;
   }
-  const sparseLength = view.getUint16(where);
-  where += 2;
-  for (let i = 0; i < sparseLength; i++) {
-    set.sparse.push(view.getUint16(where));
-    if (set.sparse[i] === 65535) set.sparse[i] = -1;
-    where += 2;
-  }
+  set.reset(dense);
 
   return [where, set];
 };
 
-const deserializeString = (where: number, view: DataView): [number, string] => {
-  // view.setUint16(where, str.length);
-  // where += 2;
-  // for (let i = 0; i < str.length; i++) {
-  //   view.setUint8(where, str.charCodeAt(i));
-  //   where += 1;
-  // }
+const deserializeString = (where: number, view: DataView, bytes: Uint8Array): [number, string] => {
   const length = view.getUint16(where);
   where += 2;
-  let str = "";
-  for (let i = 0; i < length; i++) {
-    str += String.fromCharCode(view.getUint8(where));
-    where += 1;
-  }
+  const str = readLatin1(bytes, where, length);
+  where += length;
   return [where, str];
 };
 
@@ -304,13 +314,6 @@ const deserializeNumberArray = (where: number, view: DataView): [number, number[
 };
 
 const deserializeUintArray = (where: number, view: DataView): [number, number[]] => {
-  // view.setUint16(where, arr.length);
-  // where += 2;
-  // arr.forEach((a) => {
-  //   view.setUint16(where, a);
-  //   where += 2;
-  // });
-
   const length = view.getUint16(where);
   where += 2;
   const arr: number[] = [];
@@ -322,18 +325,15 @@ const deserializeUintArray = (where: number, view: DataView): [number, number[]]
   return [where, arr];
 };
 
-const deserializeQueryFromBuffer = (where: number, view: DataView): [number, Query] => {
+const deserializeQueryFromBuffer = (where: number, view: DataView, bytes: Uint8Array): [number, Query] => {
   let q: ReturnType<typeof SparseSet>;
   [where, q] = deserializeSparseSetFromBuffer(where, view);
 
   let toRemove: ReturnType<typeof SparseSet>;
   [where, toRemove] = deserializeSparseSetFromBuffer(where, view);
 
-  let entered: ReturnType<typeof SparseSet>;
-  [where, entered] = deserializeSparseSetFromBuffer(where, view);
-
   let queryKey: string;
-  [where, queryKey] = deserializeString(where, view);
+  [where, queryKey] = deserializeString(where, view, bytes);
 
   let masks: Record<number, number>;
   [where, masks] = deserializeNumberObject(where, view);
@@ -343,7 +343,6 @@ const deserializeQueryFromBuffer = (where: number, view: DataView): [number, Que
 
   const query: Query = Object.assign(q, {
     toRemove,
-    entered,
     queryKey,
     masks,
     generations,
@@ -352,8 +351,17 @@ const deserializeQueryFromBuffer = (where: number, view: DataView): [number, Que
   return [where, query];
 };
 
+const maxGenerationIdOf = (world: World) => {
+  let max = -Infinity;
+  world.componentMap.forEach((c) => {
+    if (c.generationId > max) max = c.generationId;
+  });
+  return max;
+};
+
 export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options?: { skipStoreReset?: boolean }) => {
   const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
 
   let where = 0;
 
@@ -364,13 +372,12 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
     throw new Error(`Mismatched serializer version: ${version}, expected: ${SERIALIZER_VERSION}`);
   }
 
-  // read mode byte: 0 = full, 1 = delta
-  const mode = view.getUint8(where);
+  // skip mode byte (0 = full, 1 = delta); full deserialization accepts either payload layout here
   where += 1;
 
   let entitySparseSet: ReturnType<typeof SparseSet>;
   [where, entitySparseSet] = deserializeSparseSetFromBuffer(where, view);
-  world.entitySparseSet.reset(entitySparseSet.dense, entitySparseSet.sparse);
+  world.entitySparseSet.reset(entitySparseSet.dense);
 
   let removed: number[];
   [where, removed] = deserializeUintArray(where, view);
@@ -381,7 +388,6 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
 
   world.entityCursor = entityCursor;
 
-  // view.setUint16(where, world.size);
   const size = view.getUint16(where);
   where += 2;
   world.size = size;
@@ -392,7 +398,7 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
 
   if (!options?.skipStoreReset) {
     world.entityMasks = [new Uint32Array(size)];
-    const maxGenerationId = Math.max(...Array.from(world.componentMap.values()).map((c) => c.generationId));
+    const maxGenerationId = maxGenerationIdOf(world);
     for (let i = 1; i <= maxGenerationId; i++) {
       world.entityMasks.push(new Uint32Array(size));
     }
@@ -409,7 +415,7 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
 
   for (let i = 0; i < componentMapSize; i++) {
     let componentType: string;
-    [where, componentType] = deserializeString(where, view);
+    [where, componentType] = deserializeString(where, view, bytes);
     const schema = componentKeyMap.get(componentType)!;
 
     const generationId = view.getUint32(where);
@@ -420,17 +426,16 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
 
     const component = world.componentMap.get(schema)!;
 
-    const worldComponent: WorldComponent = {
+    const worldComponent: WorldComponent = prepareWorldComponent({
       type: componentType,
       schema: schema,
       proxies: [],
       generationId: generationId,
       bitflag: bitflag,
       queries: [],
-      changedQueries: new Set<Query>(),
       store: component.store,
       booleanKeys: (schema as any).__booleanKeys || null,
-    };
+    });
 
     if (!options?.skipStoreReset) {
       resetStore(component.store);
@@ -438,16 +443,17 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
     worldComponentMap.set(schema, worldComponent);
   }
   world.componentMap = worldComponentMap;
+  rebuildComponentBitTable(world);
 
   const worldQueryMap = new Map<string, Query>();
   const queryMapSize = view.getUint16(where);
   where += 2;
   for (let i = 0; i < queryMapSize; i++) {
     let queryName: string;
-    [where, queryName] = deserializeString(where, view);
+    [where, queryName] = deserializeString(where, view, bytes);
 
     let query: Query;
-    [where, query] = deserializeQueryFromBuffer(where, view);
+    [where, query] = deserializeQueryFromBuffer(where, view, bytes);
 
     worldQueryMap.set(queryName, query);
   }
@@ -458,13 +464,13 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
   where += 2;
   for (let i = 0; i < dirtyQueriesSize; i++) {
     let queryName: string;
-    [where, queryName] = deserializeString(where, view);
+    [where, queryName] = deserializeString(where, view, bytes);
     world.dirtyQueries.add(world.queryMap.get(queryName)!);
   }
 
-  deserializeEntityBuffer(world, where, view);
+  deserializeEntityBuffer(world, where, view, bytes);
 
-  Array.from(world.queryMap).forEach(([key, query]: [string, Query]) => {
+  world.queryMap.forEach((query: Query) => {
     const components = query.queryKey.split("|");
     components.forEach((componentKey) => {
       const component = componentKeyMap.get(componentKey)!;
@@ -479,17 +485,13 @@ export const deserializeFromBuffer = (world: World, buffer: ArrayBuffer, options
 
 const deserializeSparseSet = (set: { dense: number[]; sparse: number[] }) => {
   const newSet = SparseSet();
-  newSet.reset(
-    set.dense.map((d) => (d === -1 ? null : d)) as number[],
-    set.sparse.map((s) => (s === -1 ? null : s)) as number[]
-  );
+  newSet.reset(set.dense.map((d) => (d === -1 ? null : d)) as number[]);
   return newSet;
 };
 
 const deserializeQuery = (q: SerializedQuery): Query => {
   const query = deserializeSparseSet(q);
   const toRemove = deserializeSparseSet(q.toRemove);
-  const entered = deserializeSparseSet(q.entered);
   const masks = { ...q.masks };
   const generations = [...q.generations];
 
@@ -497,14 +499,13 @@ const deserializeQuery = (q: SerializedQuery): Query => {
     generations,
     masks,
     toRemove,
-    entered,
     queryKey: q.queryKey,
   });
 };
 
 export const deserializeFromJSON = (world: World, serializedWorld: SerializedWorld) => {
   world.entityCursor = serializedWorld.entityCursor;
-  world.entitySparseSet.reset(serializedWorld.entitySparseSet.dense, serializedWorld.entitySparseSet.sparse);
+  world.entitySparseSet.reset(serializedWorld.entitySparseSet.dense);
   world.removed = [...serializedWorld.removed];
   world.frame = serializedWorld.frame;
   world.componentMap = new Map(
@@ -515,24 +516,24 @@ export const deserializeFromJSON = (world: World, serializedWorld: SerializedWor
       resetStore(component.store);
       return [
         schema,
-        {
+        prepareWorldComponent({
           generationId: value.generationId,
           bitflag: value.bitflag,
           queries: [],
-          changedQueries: new Set<Query>(),
           store: component.store,
           proxies: [],
           type: key,
           schema,
           booleanKeys: (schema as any).__booleanKeys || null,
-        } as WorldComponent,
+        } as WorldComponent),
       ];
     })
   );
+  rebuildComponentBitTable(world);
   world.bitflag = serializedWorld.bitflag;
 
   world.entityMasks = [new Uint32Array(serializedWorld.size)];
-  const maxGenerationId = Math.max(...Array.from(world.componentMap.values()).map((c) => c.generationId));
+  const maxGenerationId = maxGenerationIdOf(world);
   for (let i = 1; i <= maxGenerationId; i++) {
     world.entityMasks.push(new Uint32Array(serializedWorld.size));
   }
@@ -543,7 +544,7 @@ export const deserializeFromJSON = (world: World, serializedWorld: SerializedWor
       const schema = componentKeyMap.get(componentKey)!;
       const component = world.componentMap.get(schema)!;
       const componentData = entity.components[componentKey];
-      addComponent(world, schema, entityId, false);
+      addComponent(world, schema, entityId);
       Object.keys(componentData).forEach((key) => {
         component.store[key][entityId] = componentData[key];
       });
@@ -555,6 +556,7 @@ export const deserializeFromJSON = (world: World, serializedWorld: SerializedWor
   const queryMap = serializedWorld.queryMap;
   Object.keys(queryMap).forEach((key) => {
     const query = deserializeQuery(queryMap[key]);
+    (query as any)[$queryOrder] = world.queries.size;
     world.queryMap.set(key, query);
     world.queries.add(query);
     if (serializedWorld.dirtyQueries.includes(key)) {

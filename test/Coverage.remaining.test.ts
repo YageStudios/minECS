@@ -427,11 +427,12 @@ describe("World delta tracking and query-system edge branches", () => {
     const system = getSystem(world, GapInitSystem);
     const before = system.initCount;
 
-    // Register component late; query key "GapWorldAA" includes "GapWorldA".
+    // Register component late, then over-attach the "GapWorldAA" query to it.
     addComponent(world, gapWorldASchema, eid);
     // removeComponent reads schema.index; set it to the world-local component slot.
     gapWorldASchema.index = world.componentList.length - 1;
     const qInstance = world.queryMap.get("GapWorldAA")!;
+    world.componentMap.get(gapWorldASchema)!.queries.push(qInstance);
     qInstance.remove(eid);
 
     removeComponent(world, gapWorldASchema, eid);
