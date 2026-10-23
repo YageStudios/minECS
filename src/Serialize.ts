@@ -1,5 +1,5 @@
-import cloneDeep from "lodash/cloneDeep";
-import isEqual from "lodash/isEqual";
+import cloneDeep from "lodash/cloneDeep.js";
+import isEqual from "lodash/isEqual.js";
 import type { Schema } from "./Schema";
 import type { Store } from "./Storage";
 import { $indexBytes, $indexType, $parentArray, $storeFlattened, $tagStore, createShadow } from "./Storage";
