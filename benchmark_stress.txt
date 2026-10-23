@@ -1,0 +1,15 @@
+================================================================================
+  minECS stress (4,000,000 entities)
+  Date: 2026-10-23T01:03:29.233Z
+================================================================================
+  createWorld                                         5.7ms
+  addEntity + components                           1175.0ms
+  first query                                         0.0ms   2,000,000 matches
+  stepWorld x1 (system over half the world)        1950.3ms
+  stepWorld x5                                      123.7ms
+  serialize binary (full)                           340.8ms   147.2MB
+  deserialize binary (new world)                    600.5ms
+  delta serializer first (full) frame               379.0ms   147.2MB
+  remove 1000 entities                                0.8ms
+  delta frame after a step                          165.4ms   68.7MB
+  apply delta                                       207.0ms

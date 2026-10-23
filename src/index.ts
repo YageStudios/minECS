@@ -23,10 +23,13 @@ export {
   stepWorldDraw,
   stepWorldTiming,
   clearWorldTiming,
+  snapshot,
+  type EntitySnapshot,
+  type WorldSnapshot,
 } from "./World";
 export { getComponentByType, componentList } from "./Component";
 export { Schema } from "./Schema";
-export { serializeWorld, createDeltaSerializer } from "./Serialize";
+export { serializeWorld, serializeWorldView, createDeltaSerializer } from "./Serialize";
 export { deserializeWorld, applyDelta } from "./Deserialize";
 
 export { System, SystemImpl, DrawSystemImpl } from "./System";

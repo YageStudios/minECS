@@ -1,8 +1,25 @@
 import type { Schema } from "./Schema";
-import type { QueryInstance, ReadOnlyWorld, SystemTiming, World } from "./Types";
+import type { Query, QueryInstance, ReadOnlyWorld, SystemTiming, World } from "./Types";
+import { commitRemovals } from "./Query";
 
 // Symbol used to store original runAll when timing is enabled
 export const $originalRunAll = Symbol("originalRunAll");
+
+// The world a system was registered in, and that world's resolved query object. Lets the scheduler and
+// the default runAll read `query.dense` directly instead of resolving the query through the world's
+// queryMap on every call. Query objects keep their identity across deserialization.
+export const $boundWorld: unique symbol = Symbol("boundWorld");
+export const $boundQuery: unique symbol = Symbol("boundQuery");
+
+/** Entities matched by a system's query, with pending removals committed (same as `system.query(world)`). */
+export const systemEntities = (system: SystemImpl<any>, world: World): number[] => {
+  const q = system[$boundQuery];
+  if (q !== null && system[$boundWorld] === world) {
+    if (world.dirtyQueries.size) commitRemovals(world);
+    return q.dense;
+  }
+  return system.query(world);
+};
 
 export function System(categoryOrSchema: number | typeof Schema, ...schemas: (typeof Schema)[]) {
   return function (cls: typeof SystemImpl<any> | typeof DrawSystemImpl<any>) {
@@ -24,6 +41,8 @@ export class SystemImpl<T extends World = World> {
 
   query: QueryInstance<T>;
   timing: SystemTiming | null = null;
+  [$boundWorld]: World | null = null;
+  [$boundQuery]: Query | null = null;
 
   constructor(query: QueryInstance<T>) {
     this.query = query;
@@ -37,7 +56,7 @@ export class SystemImpl<T extends World = World> {
 
   runAll(world: T): void {
     if (this.run) {
-      const ents = this.query(world);
+      const ents = systemEntities(this, world);
       for (let i = 0; i < ents.length; i++) {
         this.run(world, ents[i]);
       }

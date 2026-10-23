@@ -4,9 +4,9 @@ import type { World } from "../src/Types";
 import { SerialMode } from "../src/Types";
 import { System, SystemImpl } from "../src/System";
 import { Schema } from "../src/Schema";
-import { deserializeWorld } from "../src/Deserialize";
-import { serializeWorld } from "../src/Serialize";
-import { createWorld, addEntity, addComponent, stepWorld } from "../src/World";
+import { applyDelta, deserializeWorld } from "../src/Deserialize";
+import { createDeltaSerializer, serializeWorld, serializeWorldView } from "../src/Serialize";
+import { createWorld, addEntity, addComponent, stepWorld, snapshot } from "../src/World";
 
 @Component()
 class Position extends Schema {
@@ -151,7 +151,7 @@ const compareToTestState = (world: World) => {
     for (let i = 0; i < componentStates.length; i += 2) {
       const component = componentStates[i] as typeof Schema;
       const state = componentStates[i + 1] as any;
-      expect({ ...world(component, entity) }).toEqual({ ...state, type: component.name });
+      expect(snapshot(world, component, entity)).toEqual({ ...state, type: component.name });
     }
   });
 };
@@ -244,4 +244,62 @@ test("base64 serialization runs", () => {
 
   const cloneWorld = deserializeWorld(base64);
   compareToTestState(cloneWorld);
+});
+
+@Component("InPlacePos")
+class InPlacePos extends Schema {
+  @type("float32")
+  @defaultValue(0)
+  x: number;
+
+  @type("object")
+  @nullable()
+  meta: { tags: string[] } | null;
+}
+
+test("deserialize into an existing world keeps component, query and accessor identity", () => {
+  const source = createWorld();
+  const eid = addEntity(source);
+  addComponent(source, InPlacePos, eid, { x: 3, meta: { tags: ["a"] } });
+
+  const target = createWorld();
+  const targetEid = addEntity(target);
+  addComponent(target, InPlacePos, targetEid, { x: 1, meta: null });
+  const component = target.componentMap.get(InPlacePos)!;
+  const accessor = target(InPlacePos, targetEid);
+  const queries = new Map(target.queryMap);
+
+  deserializeWorld(serializeWorld(SerialMode.BINARY, source), target);
+
+  expect(target.componentMap.get(InPlacePos)).toBe(component);
+  target.queryMap.forEach((q, key) => expect(q).toBe(queries.get(key)));
+  expect(target(InPlacePos, eid)).toBe(accessor);
+  expect(accessor.x).toBe(3);
+  expect(accessor.meta).toEqual({ tags: ["a"] });
+});
+
+test("serializeWorldView round-trips and deserializes from a Uint8Array view", () => {
+  const world = createWorld();
+  const eid = addEntity(world);
+  addComponent(world, InPlacePos, eid, { x: 7, meta: { tags: ["v"] } });
+
+  const view = serializeWorldView(world);
+  expect(view).toBeInstanceOf(Uint8Array);
+  expect(Array.from(view)).toEqual(Array.from(new Uint8Array(serializeWorld(SerialMode.BINARY, world))));
+
+  const restored = deserializeWorld(view.slice());
+  expect(snapshot(restored, InPlacePos, eid)).toEqual({ x: 7, meta: { tags: ["v"] }, type: "InPlacePos" });
+});
+
+test("delta serializeView applies the same as serialize", () => {
+  const world = createWorld();
+  const eid = addEntity(world);
+  addComponent(world, InPlacePos, eid, { x: 1, meta: null });
+  const replica = deserializeWorld(serializeWorld(SerialMode.BINARY, world));
+
+  const delta = createDeltaSerializer(world);
+  delta.serialize();
+  world(InPlacePos, eid).x = 9;
+  applyDelta(delta.serializeView(), replica);
+  expect(replica(InPlacePos, eid).x).toBe(9);
 });

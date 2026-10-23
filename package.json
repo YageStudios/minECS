@@ -18,6 +18,7 @@
     "build:watch": "nodemon --watch src --exec \"npm run build\" --ext ts",
     "tsc": "tsc --noEmit",
     "test": "vitest",
+    "stress": "MINECS_STRESS_N=4000000 vitest run test/benchmark-stress.test.ts --testTimeout=0",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "prepublish": "npm run build",

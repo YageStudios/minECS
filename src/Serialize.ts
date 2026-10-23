@@ -2,13 +2,13 @@ import cloneDeep from "lodash/cloneDeep";
 import isEqual from "lodash/isEqual";
 import type { Schema } from "./Schema";
 import type { Store } from "./Storage";
-import { $indexBytes, $indexType, $parentArray, $storeBase, $storeFlattened, $tagStore, createShadow } from "./Storage";
+import { $indexBytes, $indexType, $parentArray, $storeFlattened, $tagStore, createShadow } from "./Storage";
 import type { Query, SerializedQuery, SerializedWorld, World, WorldComponent } from "./Types";
 import { SerialMode } from "./Types";
 import type { SparseSet } from "./SparseSet";
 import { Base64 } from "js-base64";
-import { getComponentSchema } from "./World";
 import { activateDeltaDirtyTracking, clearDeltaDirtyTracking, consumeDeltaDirtyTracking } from "./DeltaTracking";
+import { $serialPlan } from "./Internal";
 
 type DeltaShadow =
   | { kind: "subarray"; symbol: symbol }
@@ -17,13 +17,21 @@ type DeltaShadow =
 
 type DeltaState = {
   changedProps: Map<any, DeltaShadow>;
-  storeEntityCache: Map<any, Set<number>>;
+  /** Per store, which entities had the component at the last serialize (1 = member), by entity id. */
+  storeEntityCache: Map<any, Uint8Array>;
   dirtyProps?: Map<any, number[]>;
 };
 
 // v3: sparse-set indices are rebuilt from `dense` on load (no longer serialized) and the
 // write-only `entered` query set was removed.
-export const SERIALIZER_VERSION = 3;
+// v4: complex (object/array) faux values are embedded in the trailing JSON block as values instead of
+// as individually JSON-encoded strings (no more double encoding).
+// v5: a width byte after the mode byte (2 or 4) sets the size of entity ids and entity counts in the
+// header (entity list, free list, cursor, world size, query members), so worlds can exceed 65535
+// entities. Worlds of up to 65535 entities keep the v4 two-byte layout. v4 payloads are still read.
+export const SERIALIZER_VERSION = 5;
+/** Oldest payload version deserialization still accepts. */
+export const SERIALIZER_MIN_VERSION = 4;
 
 function replacer(key: string, value: any) {
   if (value instanceof Map) {
@@ -60,48 +68,48 @@ export type TypedIO = {
 const io = (
   bytes: number,
   write: (view: DataView, where: number, value: number) => void,
-  read: (view: DataView, where: number) => number
+  read: (view: DataView, where: number) => number,
 ): TypedIO => ({ bytes, write, read });
 
 const Int8IO = io(
   1,
   (v, w, x) => v.setInt8(w, x),
-  (v, w) => v.getInt8(w)
+  (v, w) => v.getInt8(w),
 );
 const Uint8IO = io(
   1,
   (v, w, x) => v.setUint8(w, x),
-  (v, w) => v.getUint8(w)
+  (v, w) => v.getUint8(w),
 );
 const Int16IO = io(
   2,
   (v, w, x) => v.setInt16(w, x),
-  (v, w) => v.getInt16(w)
+  (v, w) => v.getInt16(w),
 );
 const Uint16IO = io(
   2,
   (v, w, x) => v.setUint16(w, x),
-  (v, w) => v.getUint16(w)
+  (v, w) => v.getUint16(w),
 );
 const Int32IO = io(
   4,
   (v, w, x) => v.setInt32(w, x),
-  (v, w) => v.getInt32(w)
+  (v, w) => v.getInt32(w),
 );
 const Uint32IO = io(
   4,
   (v, w, x) => v.setUint32(w, x),
-  (v, w) => v.getUint32(w)
+  (v, w) => v.getUint32(w),
 );
 const Float32IO = io(
   4,
   (v, w, x) => v.setFloat32(w, x),
-  (v, w) => v.getFloat32(w)
+  (v, w) => v.getFloat32(w),
 );
 const Float64IO = io(
   8,
   (v, w, x) => v.setFloat64(w, x),
-  (v, w) => v.getFloat64(w)
+  (v, w) => v.getFloat64(w),
 );
 
 type TypedArrayConstructor = new (...args: any[]) => ArrayBufferView;
@@ -166,18 +174,87 @@ const isPrimitiveValue = (value: any): boolean => {
   return value === null || (typeof value !== "object" && typeof value !== "function");
 };
 
+const isPlainObject = (value: any): boolean => {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
+/**
+ * Deep clone specialised for JSON-shaped data (plain objects, plain arrays, primitives). Anything else
+ * (Map, Set, class instances, Dates...) is handed to lodash. Typed arrays are copied element-wise.
+ */
+export const fastClone = (value: any): any => {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) return cloneDeep(value);
+    const length = value.length;
+    const out = new Array(length);
+    for (let i = 0; i < length; i++) out[i] = fastClone(value[i]);
+    return out;
+  }
+  if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    // Copy just the elements. cloneDeep would copy the whole backing buffer, which for store
+    // subarrays is the entire column.
+    return (value as any).slice();
+  }
+  if (!isPlainObject(value)) return cloneDeep(value);
+  const out: any = Object.getPrototypeOf(value) === null ? Object.create(null) : {};
+  const keys = Object.keys(value);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    // Assigning "__proto__" would set the clone's prototype instead of copying the own key.
+    if (key === "__proto__") {
+      Object.defineProperty(out, key, {
+        value: fastClone(value[key]),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    } else out[key] = fastClone(value[key]);
+  }
+  return out;
+};
+
+/** Structural equality with lodash isEqual semantics, fast-pathed for JSON-shaped data. */
+export const fastEqual = (a: any, b: any): boolean => {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+    // SameValueZero, as lodash isEqual uses for primitives.
+    return a !== a && b !== b;
+  }
+  const aArray = Array.isArray(a);
+  if (aArray !== Array.isArray(b)) return false;
+  if (aArray) {
+    if (Object.getPrototypeOf(a) !== Array.prototype || Object.getPrototypeOf(b) !== Array.prototype) {
+      return isEqual(a, b);
+    }
+    const length = a.length;
+    if (length !== b.length) return false;
+    for (let i = 0; i < length; i++) if (!fastEqual(a[i], b[i])) return false;
+    return true;
+  }
+  if (!isPlainObject(a) || !isPlainObject(b)) return isEqual(a, b);
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (let i = 0; i < aKeys.length; i++) {
+    const key = aKeys[i];
+    if (!Object.prototype.hasOwnProperty.call(b, key) || !fastEqual(a[key], b[key])) return false;
+  }
+  return true;
+};
+
 const cloneShadowValue = (value: any): any => {
-  return isPrimitiveValue(value) ? value : cloneDeep(value);
+  return isPrimitiveValue(value) ? value : fastClone(value);
 };
 
 const shadowValuesEqual = (a: any, b: any): boolean => {
   if (isPrimitiveValue(a) && isPrimitiveValue(b)) {
     return Object.is(a, b);
   }
-  return isEqual(a, b);
+  return fastEqual(a, b);
 };
 
-type ValueConfig = {
+export type ValueConfig = {
   type: string;
   properties?: {
     [key: string]: { type: string; key: string; properties?: any; items?: any };
@@ -185,126 +262,182 @@ type ValueConfig = {
   items?: any;
 };
 
-const configType = (config: ValueConfig): string =>
-  Array.isArray(config.type) ? (config.type as string[]).filter((t) => t !== "null").join("|") : config.type;
+export type ConfigInfo = {
+  /** Resolved type name ("null" stripped from union types). */
+  type: string;
+  /** For objects: has object/array properties (or no declared properties). For arrays: object/array items. */
+  complex: boolean;
+};
 
-const hasComplexProperty = (config: ValueConfig): boolean =>
-  !config.properties ||
-  !!Object.values(config.properties).find((p: { type: string }) => p.type === "object" || p.type === "array");
+const configInfoCache = new WeakMap<object, ConfigInfo>();
 
-const serializeValue = (
-  where: number,
-  eid: number,
-  view: DataView,
-  bytes: Uint8Array,
-  key: string,
-  value: any,
-  config: ValueConfig,
-  complexEntityData: any | null,
-  schema: typeof Schema
-) => {
+/** Per-schema-node type info, computed once instead of on every serialized value. */
+export const configInfo = (config: ValueConfig): ConfigInfo => {
+  let info = configInfoCache.get(config);
+  if (info === undefined) {
+    const type = Array.isArray(config.type)
+      ? (config.type as string[]).filter((t) => t !== "null").join("|")
+      : config.type;
+    let complex = false;
+    if (type === "object") {
+      complex =
+        !config.properties ||
+        !!Object.values(config.properties).find((p: { type: string }) => p.type === "object" || p.type === "array");
+    } else if (type === "array") {
+      complex = !!config.items && (config.items.type === "object" || config.items.type === "array");
+    }
+    info = { type, complex };
+    configInfoCache.set(config, info);
+  }
+  return info;
+};
+
+// Out-parameter for serializeValue: complex (object/array) values that go to the JSON block, keyed by
+// property name. Reset by the caller before each top-level value.
+let complexOut: { [key: string]: any } | null = null;
+
+const serializeValue = (where: number, key: string, value: any, config: ValueConfig): number => {
+  // Flag byte plus the widest fixed-size value (a float64).
+  reserve(where, 9);
   if (value === null) {
-    view.setUint8(where, NULL_FLAG);
-    where += 1;
-    return [where, complexEntityData];
+    scratchView!.setUint8(where, NULL_FLAG);
+    return where + 1;
   }
   if (value === undefined) {
-    view.setUint8(where, UNDEFINED_FLAG);
-    where += 1;
-    return [where, complexEntityData];
+    scratchView!.setUint8(where, UNDEFINED_FLAG);
+    return where + 1;
   }
-  view.setUint8(where, 0);
+  scratchView!.setUint8(where, 0);
   where += 1;
 
-  const type = configType(config);
+  const info = configInfo(config);
 
-  switch (type) {
+  switch (info.type) {
     case "string":
-      view.setUint8(where, value.length);
+      reserve(where, 1 + value.length);
+      scratchView!.setUint8(where, value.length);
       where += 1;
-      where = writeLatin1(bytes, where, value);
+      where = writeLatin1(scratchBytes!, where, value);
       break;
     case "object":
-      if (hasComplexProperty(config)) {
-        if (!complexEntityData) {
-          complexEntityData = {};
-        }
-        complexEntityData[key] = value;
+      if (info.complex) {
+        (complexOut || (complexOut = {}))[key] = value;
       } else {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const properties = config.properties!;
         const keys = Object.keys(properties);
         for (let i = 0; i < keys.length; i++) {
           const propKey = keys[i];
-          [where, complexEntityData] = serializeValue(
-            where,
-            eid,
-            view,
-            bytes,
-            propKey,
-            value[propKey],
-            properties[propKey],
-            complexEntityData,
-            schema
-          );
+          where = serializeValue(where, propKey, value[propKey], properties[propKey]);
         }
       }
-
       break;
     case "array":
-      {
-        const isComplexArray = config.items.type === "object" || config.items.type === "array";
-        if (isComplexArray && value.length) {
-          if (!complexEntityData) complexEntityData = {};
-          complexEntityData[key] = [];
-          for (let i = 0; i < value.length; i++) {
-            complexEntityData[key][i] = value[i];
-          }
-        } else {
-          view.setUint16(where, value.length);
-          where += 2;
-          for (let i = 0; i < value.length; i++) {
-            [where] = serializeValue(where, eid, view, bytes, "index", value[i], config.items, complexEntityData, schema);
-          }
+      if (info.complex && value.length) {
+        (complexOut || (complexOut = {}))[key] = value;
+      } else {
+        reserve(where, 2);
+        scratchView!.setUint16(where, value.length);
+        where += 2;
+        for (let i = 0; i < value.length; i++) {
+          where = serializeValue(where, "index", value[i], config.items);
         }
       }
       break;
     case "number":
-      view.setFloat64(where, value);
+      scratchView!.setFloat64(where, value);
       where += 8;
       break;
     case "boolean":
-      view.setUint8(where, value ? 1 : 0);
+      scratchView!.setUint8(where, value ? 1 : 0);
       where += 1;
       break;
     default:
       throw new Error(`Unsupported object type: ${config.type}`);
   }
 
-  return [where, complexEntityData];
+  return where;
 };
 
 type PropKind = 0 | 1 | 2 | 3; // tag | subarray | typed | faux
 
-const serializeEntities = (
-  world: World,
-  where: number,
-  view: DataView,
-  bytes: Uint8Array,
-  deltaState?: DeltaState,
-  mode: number = 0
-): number => {
-  const changedProps = deltaState ? deltaState.changedProps : new Map<any, DeltaShadow>();
-  const componentProps: Store[] = [];
+/** Everything the (de)serializers need about one column, resolved once per world layout. */
+export type ColumnPlan = {
+  prop: any;
+  store: Store;
+  component: WorldComponent;
+  schema: typeof Schema;
+  componentType: string;
+  isTagComponent: boolean;
+  kind: PropKind;
+  elementIO: TypedIO | null;
+  indexIO: TypedIO | null;
+  indexBytes: number;
+  fauxKey: string;
+  fauxConfig: ValueConfig | null;
+};
+
+type SerialPlan = { map: Map<typeof Schema, WorldComponent>; size: number; columns: ColumnPlan[] };
+
+/**
+ * Column plan for a world, in componentMap order (that order defines the wire `pid`). Cached on the
+ * world and rebuilt only when the componentMap is replaced or grows.
+ */
+export const getSerialPlan = (world: World): ColumnPlan[] => {
+  const cached = (world as any)[$serialPlan] as SerialPlan | undefined;
+  const map = world.componentMap;
+  if (cached && cached.map === map && cached.size === map.size) return cached.columns;
+
+  const columns: ColumnPlan[] = [];
+  map.forEach((component) => {
+    const store = component.store as Store;
+    const flattened = store[$storeFlattened];
+    const props: any[] = flattened.length ? flattened : [store];
+    const schema = component.schema;
+    for (let i = 0; i < props.length; i++) {
+      const prop = props[i];
+      const kind: PropKind = prop[$tagStore]
+        ? 0
+        : Array.isArray(prop) && (prop as any)[$parentArray]
+          ? 1
+          : ArrayBuffer.isView(prop)
+            ? 2
+            : 3;
+      const fauxKey: string = kind === 3 ? prop._key : "";
+      columns.push({
+        prop,
+        store,
+        component,
+        schema,
+        componentType: component.type,
+        isTagComponent: flattened.length === 0,
+        kind,
+        elementIO: kind === 1 ? typedIOFor(prop[$parentArray]) : kind === 2 ? typedIOFor(prop) : null,
+        indexIO: kind === 1 ? INDEX_IO[prop[$indexType] as string] : null,
+        indexBytes: kind === 1 ? prop[$indexBytes] : 0,
+        fauxKey,
+        fauxConfig: kind === 3 ? schema.schema.properties[fauxKey] : null,
+      });
+    }
+  });
+  (world as any)[$serialPlan] = { map, size: map.size, columns };
+  return columns;
+};
+
+const serializeEntities = (world: World, where: number, deltaState?: DeltaState, mode: number = 0): number => {
+  // The scratch buffer can be replaced while writing (see reserve), so these are refreshed after
+  // every reserve.
+  let view = scratchView!;
+  const changedProps = deltaState ? deltaState.changedProps : null;
+  const columns = getSerialPlan(world);
   const storeEntityCache = deltaState ? deltaState.storeEntityCache : null;
   const dirtyProps = deltaState?.dirtyProps;
+  const entityMasks = world.entityMasks;
 
   const complexEntityData: any = {};
-  world["componentMap"].forEach((c) => {
-    if (c.store[$storeFlattened].length) componentProps.push(...c.store[$storeFlattened]);
-    else componentProps.push(c.store);
-  });
 
+  reserve(where, 4);
+  view = scratchView!;
   const whereEntitySize = where;
   where += 4;
 
@@ -313,38 +446,35 @@ const serializeEntities = (
   const storeEntityListCache = new Map<any, number[]>();
 
   // iterate over component props
-  for (let pid = 0; pid < componentProps.length; pid++) {
-    const prop: any = componentProps[pid];
-    const store = prop[$storeBase]();
-    const component = getComponentSchema(world, store);
-    const schema = component.schema;
-    const componentType = schema.type;
-    const componentMasks = world["entityMasks"][component.generationId];
+  for (let pid = 0; pid < columns.length; pid++) {
+    const column = columns[pid];
+    const prop: any = column.prop;
+    const store = column.store;
+    const component = column.component;
+    const componentType = column.componentType;
+    const componentMasks = entityMasks[component.generationId];
     const componentBitflag = component.bitflag;
-    const deltaShadow = changedProps.get(prop);
+    const deltaShadow = changedProps ? changedProps.get(prop) : undefined;
     const shadow = deltaShadow && "symbol" in deltaShadow ? prop[deltaShadow.symbol] : null;
 
-    // Per-column invariants (hoisted out of the entity loop).
-    const kind: PropKind = prop[$tagStore]
-      ? 0
-      : Array.isArray(prop) && (prop as any)[$parentArray]
-        ? 1
-        : ArrayBuffer.isView(prop)
-          ? 2
-          : 3;
-    const elementIO = kind === 1 ? typedIOFor(prop[$parentArray]) : kind === 2 ? typedIOFor(prop) : null;
-    const indexIO = kind === 1 ? INDEX_IO[prop[$indexType] as string] : null;
-    const indexBytes: number = kind === 1 ? prop[$indexBytes] : 0;
-    const fauxKey: string = kind === 3 ? prop._key : "";
-    const fauxConfig: ValueConfig = kind === 3 ? schema.schema.properties[fauxKey] : null;
+    // Per-column invariants (resolved once per world layout).
+    const kind = column.kind;
+    const elementIO = column.elementIO;
+    const indexIO = column.indexIO;
+    const indexBytes = column.indexBytes;
+    const fauxKey = column.fauxKey;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const fauxConfig = column.fauxConfig!;
 
     let entitiesToProcess: number[] = [];
 
-    let prevMembers: Set<number> | null = null;
+    let prevMembers: Uint8Array | null = null;
     if (storeEntityCache) {
       let members = storeEntityCache.get(store);
-      if (!members) {
-        members = new Set<number>();
+      if (!members || members.length < world.size) {
+        const grown = new Uint8Array(world.size);
+        if (members) grown.set(members);
+        members = grown;
         storeEntityCache.set(store, members);
       }
       prevMembers = members;
@@ -367,15 +497,21 @@ const serializeEntities = (
           }
         }
         storeEntityListCache.set(store, storeEntities);
-      }
-      entitiesToProcess = storeEntities;
-      if (prevMembers) {
-        prevMembers.clear();
-        for (let i = 0; i < storeEntities.length; i++) {
-          prevMembers.add(storeEntities[i]);
+        // Once per store: every column of a store has the same members.
+        if (prevMembers) {
+          prevMembers.fill(0);
+          for (let i = 0; i < storeEntities.length; i++) prevMembers[storeEntities[i]] = 1;
         }
       }
+      entitiesToProcess = storeEntities;
     }
+
+    // Room for the pid, the count and every fixed-size entry; faux values reserve as they write.
+    const subLength = kind === 1 && entitiesToProcess.length ? prop[entitiesToProcess[0]].length : 0;
+    const entryBytes =
+      kind === 1 ? 4 + indexBytes + subLength * (indexBytes + elementIO!.bytes) : kind === 2 ? 4 + elementIO!.bytes : 4;
+    reserve(where, 6 + entitiesToProcess.length * entryBytes);
+    view = scratchView!;
 
     // write pid
     view.setUint16(where, pid);
@@ -394,12 +530,8 @@ const serializeEntities = (
       let newlyAddedComponent = false;
 
       if (mode === 1 && prevMembers) {
-        newlyAddedComponent = isCurrentMember && !prevMembers.has(eid);
-        if (isCurrentMember) {
-          prevMembers.add(eid);
-        } else {
-          prevMembers.delete(eid);
-        }
+        newlyAddedComponent = isCurrentMember && prevMembers[eid] === 0;
+        prevMembers[eid] = isCurrentMember ? 1 : 0;
       }
 
       if (!isCurrentMember) {
@@ -500,22 +632,20 @@ const serializeEntities = (
           elemIO.write(view, where, prop[eid]);
           where += elemIO.bytes;
         } else {
-          let propComplexData: any = null;
-          [where, propComplexData] = serializeValue(
-            where,
-            eid,
-            view,
-            bytes,
-            fauxKey,
-            prop[eid],
-            fauxConfig,
-            propComplexData,
-            schema
-          );
-          if (propComplexData) {
-            const entityData = complexEntityData[eid] || (complexEntityData[eid] = {});
-            const componentData = entityData[componentType] || (entityData[componentType] = {});
-            componentData[fauxKey] = JSON.stringify(propComplexData[fauxKey], replacer);
+          complexOut = null;
+          where = serializeValue(where, fauxKey, prop[eid], fauxConfig);
+          // Room for the next entity id (the column reserve only covered the first one).
+          reserve(where, 4);
+          view = scratchView!;
+          if (complexOut !== null) {
+            const complexValue = (complexOut as { [key: string]: any })[fauxKey];
+            complexOut = null;
+            if (complexValue !== undefined) {
+              const entityData = complexEntityData[eid] || (complexEntityData[eid] = {});
+              const componentData = entityData[componentType] || (entityData[componentType] = {});
+              // Stored as a value; the whole block is JSON-encoded once below.
+              componentData[fauxKey] = complexValue;
+            }
           }
         }
 
@@ -546,10 +676,11 @@ const serializeEntities = (
 
   const complexEntityDataBuffer = JSON.stringify(complexEntityData, replacer);
 
-  view.setUint32(where, complexEntityDataBuffer.length);
+  reserve(where, 4 + complexEntityDataBuffer.length);
+  scratchView!.setUint32(where, complexEntityDataBuffer.length);
   where += 4;
 
-  where = writeLatin1(bytes, where, complexEntityDataBuffer);
+  where = writeLatin1(scratchBytes!, where, complexEntityDataBuffer);
 
   return where;
 };
@@ -570,7 +701,7 @@ const serializeComponent = <T>(entityId: number, component: WorldComponent, keys
     const key = keys[i];
     let value = store[key][entityId];
     if (value !== undefined) {
-      if (value !== null && typeof value === "object") value = cloneDeep(value);
+      if (value !== null && typeof value === "object") value = fastClone(value);
       if (booleanKeys?.has(key)) value = !!value;
       data[key] = value;
     }
@@ -616,7 +747,10 @@ const serializeEntityWith = (entityId: number, entries: JSONComponentEntry[]) =>
 
 const serializeToJSON = (world: World) => {
   const entries = jsonComponentEntries(world);
-  return world.entitySparseSet.dense.map((entityId) => serializeEntityWith(entityId, entries));
+  const dense = world.entitySparseSet.dense;
+  const out = new Array(dense.length);
+  for (let i = 0; i < dense.length; i++) out[i] = serializeEntityWith(dense[i], entries);
+  return out;
 };
 
 // Derived sparse index: index of each member id, -1 for non-member slots (format compatibility only).
@@ -659,25 +793,41 @@ const serializeQuery = (q: Query): SerializedQuery => {
  *
  ****************************************************/
 
-const serializeSparseSetToBuffer = (set: ReturnType<typeof SparseSet>, where: number, view: DataView) => {
+// Entity ids and counts are written as uint16 or uint32 (`wide`); the missing-slot marker is the
+// type's max value (-1 wrapped).
+const serializeSparseSetToBuffer = (set: ReturnType<typeof SparseSet>, where: number, wide: boolean) => {
   const dense = set.dense;
-  view.setUint16(where, dense.length);
-  where += 2;
-  for (let i = 0; i < dense.length; i++) {
-    view.setUint16(where, dense[i] ?? -1);
+  reserve(where, (dense.length + 1) * (wide ? 4 : 2));
+  const view = scratchView!;
+  if (wide) {
+    view.setUint32(where, dense.length);
+    where += 4;
+    for (let i = 0; i < dense.length; i++) {
+      view.setUint32(where, dense[i] ?? -1);
+      where += 4;
+    }
+  } else {
+    view.setUint16(where, dense.length);
     where += 2;
+    for (let i = 0; i < dense.length; i++) {
+      view.setUint16(where, dense[i] ?? -1);
+      where += 2;
+    }
   }
   return where;
 };
 
-const serializeString = (str: string, where: number, view: DataView, bytes: Uint8Array) => {
-  view.setUint16(where, str.length);
+const serializeString = (str: string, where: number) => {
+  reserve(where, 2 + str.length);
+  scratchView!.setUint16(where, str.length);
   where += 2;
-  return writeLatin1(bytes, where, str);
+  return writeLatin1(scratchBytes!, where, str);
 };
 
-const serializeNumberObject = (obj: Record<number, number>, where: number, view: DataView) => {
+const serializeNumberObject = (obj: Record<number, number>, where: number) => {
   const keys = Object.keys(obj);
+  reserve(where, 2 + keys.length * 12);
+  const view = scratchView!;
   view.setUint16(where, keys.length);
   where += 2;
   for (let i = 0; i < keys.length; i++) {
@@ -690,7 +840,9 @@ const serializeNumberObject = (obj: Record<number, number>, where: number, view:
   return where;
 };
 
-const serializeNumberArray = (arr: number[], where: number, view: DataView) => {
+const serializeNumberArray = (arr: number[], where: number) => {
+  reserve(where, 2 + arr.length * 8);
+  const view = scratchView!;
   view.setUint16(where, arr.length);
   where += 2;
   for (let i = 0; i < arr.length; i++) {
@@ -700,22 +852,33 @@ const serializeNumberArray = (arr: number[], where: number, view: DataView) => {
   return where;
 };
 
-const serializeUintArray = (arr: number[], where: number, view: DataView) => {
-  view.setUint16(where, arr.length);
-  where += 2;
-  for (let i = 0; i < arr.length; i++) {
-    view.setUint16(where, arr[i]);
+const serializeUintArray = (arr: number[], where: number, wide: boolean) => {
+  reserve(where, (arr.length + 1) * (wide ? 4 : 2));
+  const view = scratchView!;
+  if (wide) {
+    view.setUint32(where, arr.length);
+    where += 4;
+    for (let i = 0; i < arr.length; i++) {
+      view.setUint32(where, arr[i]);
+      where += 4;
+    }
+  } else {
+    view.setUint16(where, arr.length);
     where += 2;
+    for (let i = 0; i < arr.length; i++) {
+      view.setUint16(where, arr[i]);
+      where += 2;
+    }
   }
   return where;
 };
 
-const serializeQueryToBuffer = (query: Query, where: number, view: DataView, bytes: Uint8Array) => {
-  where = serializeSparseSetToBuffer(query, where, view);
-  where = serializeSparseSetToBuffer(query.toRemove, where, view);
-  where = serializeString(query.queryKey, where, view, bytes);
-  where = serializeNumberObject(query.masks, where, view);
-  where = serializeNumberArray(query.generations, where, view);
+const serializeQueryToBuffer = (query: Query, where: number, wide: boolean) => {
+  where = serializeSparseSetToBuffer(query, where, wide);
+  where = serializeSparseSetToBuffer(query.toRemove, where, wide);
+  where = serializeString(query.queryKey, where);
+  where = serializeNumberObject(query.masks, where);
+  where = serializeNumberArray(query.generations, where);
 
   return where;
 };
@@ -726,35 +889,68 @@ let scratchBuffer: ArrayBuffer | null = null;
 let scratchView: DataView | null = null;
 let scratchBytes: Uint8Array | null = null;
 
-const getScratch = (maxBytes: number) => {
-  if (!scratchBuffer || scratchBuffer.byteLength < maxBytes) {
-    scratchBuffer = new ArrayBuffer(maxBytes);
-    scratchView = new DataView(scratchBuffer);
-    scratchBytes = new Uint8Array(scratchBuffer);
-  }
-  return { buffer: scratchBuffer, view: scratchView as DataView, bytes: scratchBytes as Uint8Array };
+const setScratch = (buffer: ArrayBuffer) => {
+  scratchBuffer = buffer;
+  scratchView = new DataView(buffer);
+  scratchBytes = new Uint8Array(buffer);
 };
 
-const serializeWorldToBuffer = (world: World, maxBytes = 20000000, deltaState?: DeltaState, mode: number = 0) => {
-  const { buffer, view, bytes } = getScratch(maxBytes);
+/** Makes sure the scratch buffer holds at least `bytes` bytes (its first use, or a larger `maxBytes`). */
+const getScratch = (bytes: number) => {
+  if (!scratchBuffer || scratchBuffer.byteLength < bytes) setScratch(new ArrayBuffer(bytes));
+};
+
+/**
+ * Makes room for `n` more bytes at `where`, growing the scratch buffer (at least doubling it) and
+ * keeping the `where` bytes already written. `maxBytes` is only the starting size, so large worlds
+ * never fail for lack of space. Writers re-read scratchView/scratchBytes after calling this.
+ */
+const reserve = (where: number, n: number) => {
+  const need = where + n;
+  const buffer = scratchBuffer!;
+  if (need <= buffer.byteLength) return;
+  let size = Math.max(buffer.byteLength * 2, 1024);
+  while (size < need) size *= 2;
+  const next = new ArrayBuffer(size);
+  new Uint8Array(next).set(new Uint8Array(buffer, 0, where));
+  setScratch(next);
+};
+
+/** Serializes into the shared scratch buffer and returns the number of bytes written. */
+const serializeWorldToScratch = (world: World, maxBytes = 20000000, deltaState?: DeltaState, mode: number = 0) => {
+  getScratch(maxBytes);
+  // Ids are below `size` and the cursor is at most `size`, so 16 bits suffice (with 0xffff left free
+  // as the missing-slot marker) while size fits in 16 bits.
+  const wide = world.size > 0xffff || world.entityCursor > 0xffff;
 
   let where = 0;
 
-  view.setUint16(where, SERIALIZER_VERSION);
+  reserve(where, 4);
+  scratchView!.setUint16(where, SERIALIZER_VERSION);
   where += 2;
 
   // mode byte: 0 = full, 1 = delta
-  view.setUint8(where, mode);
+  scratchView!.setUint8(where, mode);
   where += 1;
 
-  if (!world.entitySparseSet.dense.length) return buffer.slice(0, where);
+  // index width byte: 2 or 4
+  scratchView!.setUint8(where, wide ? 4 : 2);
+  where += 1;
 
-  where = serializeSparseSetToBuffer(world.entitySparseSet, where, view);
-  where = serializeUintArray(world.removed, where, view);
-  view.setUint16(where, world.entityCursor);
-  where += 2;
-  view.setUint16(where, world.size);
-  where += 2;
+  where = serializeSparseSetToBuffer(world.entitySparseSet, where, wide);
+  where = serializeUintArray(world.removed, where, wide);
+
+  reserve(where, 2 * 4 + 4 + 4 + 2);
+  let view = scratchView!;
+  if (wide) {
+    view.setUint32(where, world.entityCursor);
+    view.setUint32(where + 4, world.size);
+    where += 8;
+  } else {
+    view.setUint16(where, world.entityCursor);
+    view.setUint16(where + 2, world.size);
+    where += 4;
+  }
   view.setUint32(where, world.bitflag);
   where += 4;
   view.setUint32(where, world.frame);
@@ -765,35 +961,55 @@ const serializeWorldToBuffer = (world: World, maxBytes = 20000000, deltaState?: 
 
   world.componentMap.forEach((value, key) => {
     const component = key as typeof Schema;
-    where = serializeString(component.type, where, view, bytes);
-    view.setUint32(where, value.generationId);
+    where = serializeString(component.type, where);
+    reserve(where, 8);
+    scratchView!.setUint32(where, value.generationId);
     where += 4;
-    view.setUint32(where, value.bitflag);
+    scratchView!.setUint32(where, value.bitflag);
     where += 4;
   });
 
   const queryMap = Array.from(world.queryMap.entries());
-  view.setUint16(where, queryMap.length);
+  reserve(where, 2);
+  scratchView!.setUint16(where, queryMap.length);
   where += 2;
   for (let i = 0; i < queryMap.length; i++) {
     const [key, value] = queryMap[i];
-    where = serializeString(key, where, view, bytes);
-    where = serializeQueryToBuffer(value, where, view, bytes);
+    where = serializeString(key, where);
+    where = serializeQueryToBuffer(value, where, wide);
   }
 
+  reserve(where, 2);
+  view = scratchView!;
   view.setUint16(where, world.dirtyQueries.size);
   where += 2;
 
   for (let i = 0; i < queryMap.length; i++) {
     const [key, value] = queryMap[i];
     if (world.dirtyQueries.has(value)) {
-      where = serializeString(key, where, view, bytes);
+      where = serializeString(key, where);
     }
   }
 
-  where = serializeEntities(world, where, view, bytes, deltaState, mode);
+  where = serializeEntities(world, where, deltaState, mode);
 
-  return buffer.slice(0, where);
+  return where;
+};
+
+const scratchBytesView = (length: number) => new Uint8Array(scratchBuffer as ArrayBuffer, 0, length);
+
+const serializeWorldToBuffer = (world: World, maxBytes = 20000000, deltaState?: DeltaState, mode: number = 0) => {
+  const length = serializeWorldToScratch(world, maxBytes, deltaState, mode);
+  return (scratchBuffer as ArrayBuffer).slice(0, length);
+};
+
+/**
+ * Binary serialization without the trailing copy: returns a view into a shared scratch buffer.
+ * The view is only valid until the next serialize call (of any world), so consume it synchronously
+ * (send it, hash it, copy it) or use `serializeWorld(SerialMode.BINARY, world)` instead.
+ */
+export const serializeWorldView = (world: World, maxBytes = 20000000): Uint8Array => {
+  return scratchBytesView(serializeWorldToScratch(world, maxBytes));
 };
 
 export function serializeWorld(serializationType: SerialMode.BINARY, world: World): ArrayBuffer;
@@ -823,10 +1039,13 @@ export function serializeWorld(serializationType: SerialMode, world: World): Ser
         ];
       }),
       queryMap: {
-        ...Array.from(world.queryMap.entries()).reduce((queries, [key, value]) => {
-          queries[key] = serializeQuery(value);
-          return queries;
-        }, {} as Record<string, SerializedQuery>),
+        ...Array.from(world.queryMap.entries()).reduce(
+          (queries, [key, value]) => {
+            queries[key] = serializeQuery(value);
+            return queries;
+          },
+          {} as Record<string, SerializedQuery>,
+        ),
       },
       dirtyQueries: Array.from(world.queryMap.entries())
         .map(([key, value]) => {
@@ -839,16 +1058,15 @@ export function serializeWorld(serializationType: SerialMode, world: World): Ser
   } else if (serializationType === SerialMode.BINARY) {
     return serializeWorldToBuffer(world);
   } else {
-    const buffer = serializeWorld(SerialMode.BINARY, world);
-    const base64Buffer = Base64.fromUint8Array(new Uint8Array(buffer));
-    return base64Buffer;
+    // Encode straight from the scratch view; no intermediate ArrayBuffer copy.
+    return Base64.fromUint8Array(serializeWorldView(world));
   }
 }
 
 export const createDeltaSerializer = (world: World) => {
   let initialized = false;
   const changedProps = new Map<any, DeltaShadow>();
-  const storeEntityCache = new Map<any, Set<number>>();
+  const storeEntityCache = new Map<any, Uint8Array>();
 
   const initShadows = () => {
     activateDeltaDirtyTracking(world);
@@ -875,15 +1093,25 @@ export const createDeltaSerializer = (world: World) => {
     initialized = true;
   };
 
-  const serialize = (maxBytes = 20000000): ArrayBuffer => {
+  const serializeToScratch = (maxBytes: number): number => {
     if (!initialized) {
       initShadows();
       // First call: full serialization (mode 0) but with shadows active so they get synced
-      return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache }, 0);
+      return serializeWorldToScratch(world, maxBytes, { changedProps, storeEntityCache }, 0);
     }
     const dirtyProps = consumeDeltaDirtyTracking(world);
     // Subsequent calls: delta serialization (mode 1)
-    return serializeWorldToBuffer(world, maxBytes, { changedProps, storeEntityCache, dirtyProps }, 1);
+    return serializeWorldToScratch(world, maxBytes, { changedProps, storeEntityCache, dirtyProps }, 1);
+  };
+
+  const serialize = (maxBytes = 20000000): ArrayBuffer => {
+    const length = serializeToScratch(maxBytes);
+    return (scratchBuffer as ArrayBuffer).slice(0, length);
+  };
+
+  /** Like serialize, but returns a view into the shared scratch buffer (valid until the next serialize). */
+  const serializeView = (maxBytes = 20000000): Uint8Array => {
+    return scratchBytesView(serializeToScratch(maxBytes));
   };
 
   const reset = () => {
@@ -891,5 +1119,5 @@ export const createDeltaSerializer = (world: World) => {
     clearDeltaDirtyTracking(world);
   };
 
-  return { serialize, reset };
+  return { serialize, serializeView, reset };
 };

@@ -18,9 +18,12 @@ import {
   addEntity,
   createWorld,
   getSystem,
+  hasComponent,
+  rebuildComponentBitTable,
   removeComponent,
   sortComponentQueries,
   stepWorldDraw,
+  snapshot,
 } from "../src/World";
 import { defineQuery } from "../src/Query";
 import { SparseSet } from "../src/SparseSet";
@@ -278,16 +281,21 @@ describe("Deserialize remaining sparse/null union paths", () => {
   });
 
   test("deserializeFromBuffer recreates extra entity mask generations", () => {
+    // The payload's layout (not the target's) decides how many generations the masks need.
     const world = createWorld();
+    const scalar = world.componentMap.get(TailScalar)!;
+    scalar.generationId = 2;
+    world.entityMasks.push(new Uint32Array(world.size), new Uint32Array(world.size));
+    rebuildComponentBitTable(world);
     const eid = addEntity(world);
     addComponent(world, TailScalar, eid, { n: 3 });
+    expect(world.entityMasks[2][eid]).toBe(scalar.bitflag);
     const buffer = serializeWorld(SerialMode.BINARY, world);
 
-    const clone = createWorld();
-    const firstComp = clone.componentMap.values().next().value!;
-    firstComp.generationId = 2;
-    deserializeWorld(buffer, clone);
+    const clone = deserializeWorld(buffer, createWorld());
     expect(clone.entityMasks.length).toBeGreaterThan(2);
+    expect(hasComponent(clone, TailScalar, eid)).toBe(true);
+    expect(clone(TailScalar, eid).n).toBe(3);
   });
 });
 
@@ -313,7 +321,8 @@ describe("Serialize remaining scalar/faux delta branches", () => {
     const buffer = serializeWorld(SerialMode.BINARY, world);
     expect(buffer.byteLength).toBeGreaterThan(0);
     const complex = extractTrailingJson(buffer);
-    expect(complex?.[String(eid)]?.TailObj?.data).toBe(JSON.stringify({ p: 1 }));
+    // v4: complex values are JSON-encoded once, inside the trailing block
+    expect(complex?.[String(eid)]?.TailObj?.data).toEqual({ p: 1 });
   });
 
   test("complex array with elements initializes complexEntityData and copies entries", () => {
@@ -324,7 +333,7 @@ describe("Serialize remaining scalar/faux delta branches", () => {
     const buffer = serializeWorld(SerialMode.BINARY, world);
     expect(buffer.byteLength).toBeGreaterThan(0);
     const complex = extractTrailingJson(buffer);
-    expect(complex?.[String(eid)]?.TailArrayObj?.items).toBe(JSON.stringify([{ nested: { v: 1 } }]));
+    expect(complex?.[String(eid)]?.TailArrayObj?.items).toEqual([{ nested: { v: 1 } }]);
   });
 
   test("nullable union with non-null value hits array-type normalization path", () => {
@@ -528,9 +537,12 @@ describe("System nullish depth branch", () => {
 });
 
 describe("World remaining branches", () => {
-  test("addEntity throws when eid exceeds world size", () => {
-    const world = createWorld(0);
-    addEntity(world);
+  test("addEntity throws once the world holds `size` entities", () => {
+    const empty = createWorld(0);
+    expect(() => addEntity(empty)).toThrow("max entities reached");
+
+    const world = createWorld(1);
+    expect(addEntity(world)).toBe(0);
     expect(() => addEntity(world)).toThrow("max entities reached");
   });
 
@@ -634,8 +646,8 @@ describe("World remaining branches", () => {
     const world = createWorld();
     const eid = addEntity(world);
     addComponent(world, TailScalar, eid, { n: 4 });
-    const keys = Object.keys(world(TailScalar, eid));
-    const keysAgain = Object.keys(world(TailScalar, eid));
+    const keys = Object.keys(snapshot(world, TailScalar, eid));
+    const keysAgain = Object.keys(snapshot(world, TailScalar, eid));
     expect(keys).toContain("type");
     expect(keys).toContain("n");
     expect(keysAgain).toContain("n");

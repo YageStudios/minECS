@@ -1,77 +1,97 @@
 const isIndex = (val: unknown): val is number => typeof val === "number" && val >= 0 && Number.isInteger(val);
 
-export const SparseSet = (initialSize = 0) => {
-  const dense: number[] = [];
+const $owner = Symbol("sparseSetOwner");
+
+// One shared sort override for every set (instead of a fresh closure per set). Sorting `dense` in place
+// is supported public behaviour, so the sparse index is rebuilt afterwards.
+function sortDense(this: number[], comparator?: (a: number, b: number) => number) {
+  const result = Array.prototype.sort.call(this, comparator);
+  ((this as any)[$owner] as SparseSetImpl).reindex();
+  return result;
+}
+
+export class SparseSetImpl {
+  dense: number[];
   // Typed sparse index: never falls into dictionary mode for large / late entity ids and
   // zero-initialised slots are safe because membership is confirmed through `dense`.
-  let sparse = new Uint32Array(initialSize);
+  sparse: Uint32Array;
 
-  const grow = (val: number) => {
-    const next = new Uint32Array(Math.max(val + 1, sparse.length * 2, 8));
-    next.set(sparse);
-    sparse = next;
-    set.sparse = next;
-  };
+  constructor(initialSize = 0) {
+    const dense: number[] = [];
+    (dense as any)[$owner] = this;
+    dense.sort = sortDense as any;
+    this.dense = dense;
+    this.sparse = new Uint32Array(initialSize);
+  }
 
-  const setIndex = (val: unknown, index: number) => {
+  private grow(val: number) {
+    const next = new Uint32Array(Math.max(val + 1, this.sparse.length * 2, 8));
+    next.set(this.sparse);
+    this.sparse = next;
+  }
+
+  private setIndex(val: unknown, index: number) {
     if (!isIndex(val)) return;
-    if (val >= sparse.length) grow(val);
-    sparse[val] = index;
-  };
+    if (val >= this.sparse.length) this.grow(val);
+    this.sparse[val] = index;
+  }
 
-  dense.sort = function (comparator) {
-    const result = Array.prototype.sort.call(this, comparator);
+  /** @internal Rebuilds the sparse index from `dense` (after an in-place sort). */
+  reindex() {
+    const dense = this.dense;
+    for (let i = 0; i < dense.length; i++) this.setIndex(dense[i], i);
+  }
 
-    for (let i = 0; i < dense.length; i++) {
-      setIndex(dense[i], i);
-    }
+  has(val: number) {
+    return this.dense[this.sparse[val]] === val;
+  }
 
-    return result;
-  };
-
-  const has = (val: number) => dense[sparse[val]] === val;
-
-  const add = (val: number) => {
+  add(val: number) {
+    const dense = this.dense;
+    const sparse = this.sparse;
     if (dense[sparse[val]] === val) return false;
     const index = dense.push(val) - 1;
     // Fast path for in-range non-negative integers; anything else goes through the validated path.
-    if ((val >>> 0) === val && val < sparse.length) sparse[val] = index;
-    else setIndex(val, index);
+    if (val >>> 0 === val && val < sparse.length) sparse[val] = index;
+    else this.setIndex(val, index);
     return true;
-  };
+  }
 
-  const remove = (val: number) => {
-    if (!has(val)) return;
+  remove(val: number) {
+    const dense = this.dense;
+    const sparse = this.sparse;
     const index = sparse[val];
+    if (dense[index] !== val) return;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const swapped = dense.pop()!;
     if (swapped !== val) {
       dense[index] = swapped;
       sparse[swapped] = index;
     }
-  };
+  }
 
   // `altSparse` is accepted for backwards compatibility; the index is always rebuilt from `altDense`.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const reset = (altDense?: number[], altSparse?: ArrayLike<number>) => {
+  reset(altDense?: number[], altSparse?: ArrayLike<number>) {
+    const dense = this.dense;
     dense.length = 0;
     if (altDense) {
-      for (let i = 0; i < altDense.length; i++) {
+      const length = altDense.length;
+      let max = -1;
+      for (let i = 0; i < length; i++) {
+        const val = altDense[i];
+        if (val > max) max = val;
+      }
+      if (max >= this.sparse.length) this.grow(max);
+      const sparse = this.sparse;
+      for (let i = 0; i < length; i++) {
         const val = altDense[i];
         dense.push(val);
-        setIndex(val, i);
+        if (val >>> 0 === val) sparse[val] = i;
+        else this.setIndex(val, i);
       }
     }
-  };
+  }
+}
 
-  const set = {
-    add,
-    remove,
-    has,
-    sparse,
-    dense,
-    reset,
-  };
-
-  return set;
-};
+export const SparseSet = (initialSize = 0) => new SparseSetImpl(initialSize);

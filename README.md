@@ -81,6 +81,14 @@ console.log({ ...world(Position, entity) }); //  { x: 30, y: 30, type: "Position
 
 ```
 
+`snapshot` returns plain-object copies of component values, several times faster than spreading; use it in hot paths such as per-frame snapshots:
+
+```ts
+snapshot(world, Position, entity); // { x: 30, y: 30, type: "Position" }, same as the spread above
+snapshot(world, entity); // { Position: { x: 30, y: 30, type: "Position" }, Velocity: { ... } }
+snapshot(world); // { [entity]: { Position: { ... }, Velocity: { ... } }, ... }
+```
+
 ## Queries
 
 Queries provide a way to retrieve and check entities matching a set of components.
@@ -121,7 +129,28 @@ const patchBuffer = delta.serialize();
 
 // Apply the delta to a target world
 applyDelta(patchBuffer, remoteWorld);
+
+// Zero-copy variant: a Uint8Array view over the serializer's scratch buffer.
+// Valid only until the next serialize call, so send or copy it right away.
+socket.send(delta.serializeView());
 ```
+
+`serializeWorldView(world)` is the matching zero-copy variant of `serializeWorld(SerialMode.BINARY, world)`.
+`deserializeWorld` and `applyDelta` accept either an `ArrayBuffer` or a `Uint8Array`.
+
+### World size and large worlds
+
+`createWorld(size)` allocates every component store for `size` entities (default 1000), and a world
+holds at most `size` entities. Binary payloads use 16-bit entity ids for worlds of up to 65,535
+entities and switch to 32-bit ids above that, so worlds of millions of entities serialize normally.
+The serializer's buffer grows as needed.
+
+`deserializeWorld(payload)` without a target creates a world sized for the payload. A target world
+must have been created at least as large as the payload's world; otherwise `deserializeWorld` throws
+before changing it.
+
+`npm run stress` builds, steps, serializes and deltas a 4,000,000-entity world and writes the timings
+to `benchmark_stress.txt` (set `MINECS_STRESS_N` to run another size).
 
 ## Additional Features
 

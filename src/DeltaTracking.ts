@@ -1,24 +1,22 @@
 import type { Store } from "./Storage";
 import type { World } from "./Types";
+import { $deltaDirtyState, $deltaHolder } from "./Internal";
 
-export const $deltaDirtyState = Symbol("deltaDirtyState");
+export { $deltaDirtyState };
 
-type DirtyBucket = {
+export type DirtyBucket = {
   marks: Uint32Array;
   ids: number[];
   epoch: number;
 };
 
-type DeltaDirtyState = {
+export type DeltaDirtyState = {
   dirtyProps: Map<Store, DirtyBucket>;
 };
 
-const $deltaHolder = Symbol("deltaHolder");
-
 /**
- * Plain, stable-shaped holder for the tracking state. The world itself is a function object with
- * many properties (dictionary mode), so component setters check `holder.state` instead of doing a
- * hash lookup on the world for every write.
+ * Plain, stable-shaped holder for the tracking state, so component setters check `holder.state`
+ * through a closure instead of reading the world on every write.
  */
 export type DeltaHolder = { state: DeltaDirtyState | undefined };
 
@@ -59,10 +57,8 @@ export const clearDeltaDirtyTracking = (world: World) => {
   }
 };
 
-export const markDeltaDirty = (world: World, propStore: Store, eid: number) => {
-  const state = getState(world);
-  if (!state) return;
-
+/** Returns (creating on first use) the dirty bucket for one column. Buckets live as long as the state. */
+export const getDirtyBucket = (state: DeltaDirtyState, world: World, propStore: Store): DirtyBucket => {
   let bucket = state.dirtyProps.get(propStore);
   if (!bucket) {
     bucket = {
@@ -72,10 +68,20 @@ export const markDeltaDirty = (world: World, propStore: Store, eid: number) => {
     };
     state.dirtyProps.set(propStore, bucket);
   }
+  return bucket;
+};
+
+export const markBucket = (bucket: DirtyBucket, eid: number) => {
   if (bucket.marks[eid] !== bucket.epoch) {
     bucket.marks[eid] = bucket.epoch;
     bucket.ids.push(eid);
   }
+};
+
+export const markDeltaDirty = (world: World, propStore: Store, eid: number) => {
+  const state = getState(world);
+  if (!state) return;
+  markBucket(getDirtyBucket(state, world, propStore), eid);
 };
 
 export const consumeDeltaDirtyTracking = (world: World): Map<Store, number[]> => {
