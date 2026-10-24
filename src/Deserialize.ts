@@ -25,6 +25,7 @@ import {
   rebuildComponentBitTable,
   sortComponentQueries,
   updateReuseThreshold,
+  type CreateWorldOptions,
 } from "./World";
 import { $queryOrder, queryAddEntity, queryCheckEntity } from "./Query";
 
@@ -787,23 +788,27 @@ export const deserializeFromJSON = (world: World, serializedWorld: SerializedWor
 
 /**
  * Loads a payload into `world`, or into a new world sized for the payload when none is given. A
- * given world must have been created at least as large as the payload's world.
+ * given world must have been created at least as large as the payload's world. Pass
+ * CreateWorldOptions instead of a world to create the new world with only those components and
+ * systems (the payload's components must be among them).
  */
 export const deserializeWorld = (
   serializedWorld: SerializedWorld | ArrayBuffer | ArrayBufferView | string,
-  world?: World,
+  target?: World | CreateWorldOptions,
 ) => {
+  let world = typeof target === "function" ? target : undefined;
+  const options = typeof target === "function" ? undefined : target;
   if (serializedWorld instanceof ArrayBuffer || ArrayBuffer.isView(serializedWorld)) {
-    world ??= createWorld(readPayloadSize(toViews(serializedWorld).view) ?? undefined);
+    world ??= createWorld(readPayloadSize(toViews(serializedWorld).view) ?? undefined, options);
     deserializeFromBuffer(world, serializedWorld);
     return world;
   } else if (typeof serializedWorld === "string") {
     const bytes = Base64.toUint8Array(serializedWorld);
-    world ??= createWorld(readPayloadSize(toViews(bytes).view) ?? undefined);
+    world ??= createWorld(readPayloadSize(toViews(bytes).view) ?? undefined, options);
     deserializeFromBuffer(world, bytes);
     return world;
   } else {
-    world ??= createWorld((serializedWorld as SerializedWorld).size);
+    world ??= createWorld((serializedWorld as SerializedWorld).size, options);
     return deserializeFromJSON(world, serializedWorld as SerializedWorld);
   }
 };

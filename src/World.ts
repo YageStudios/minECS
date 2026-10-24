@@ -6,7 +6,7 @@ import { SparseSet } from "./SparseSet";
 import type { Schema } from "./Schema";
 import { componentList, freezeComponentOrder } from "./Component";
 import { $queryOrder, queryRemoveEntity, queryCheckEntity, queryAddEntity, defineQuery } from "./Query";
-import type { SystemImpl } from "./System";
+import type { DrawSystemImpl, SystemImpl } from "./System";
 import {
   $boundQuery,
   $boundWorld,
@@ -1082,10 +1082,39 @@ const dataSlot = (value: any, enumerable = true): PropertyDescriptor => ({
 /** How many entities the world's component stores can hold (the size it was created with). */
 export const getWorldCapacity = (world: World): number => (world as any)[$capacity] ?? world.size;
 
-export const createWorld = (size?: number): World => {
+/**
+ * Which components and systems a world registers. Omitted lists mean "everything defined": every
+ * @Component, and every @System whose components are all registered.
+ */
+export type CreateWorldOptions = {
+  /** Only these components are registered (in global index order, whatever order they are listed in). */
+  components?: readonly (typeof Schema)[];
+  /** Only these systems are created (in the usual depth / query order, whatever order they are listed in). */
+  systems?: readonly (typeof SystemImpl<any> | typeof DrawSystemImpl<any>)[];
+};
+
+const describeType = (schema: typeof Schema | undefined) => (schema && schema.type) || String(schema);
+
+/** Fails with a clear message when `schema` is not registered in `world`. */
+const unregistered = (world: World, schema: typeof Schema): never => {
+  const known = Array.from(world.componentMap.keys(), (s) => s.type);
+  throw new Error(
+    `minECS - component ${describeType(schema)} is not registered in this world` +
+      (known.length < 40 ? ` (registered: ${known.join(", ") || "none"})` : ` (${known.length} registered)`),
+  );
+};
+
+/** Whether `world` has `schema` registered (worlds created with a component subset may not). */
+export const isComponentRegistered = (world: World, schema: typeof Schema): boolean =>
+  lookupComponent(world, schema) !== undefined;
+
+export const createWorld = (size?: number, options?: CreateWorldOptions): World => {
   freezeComponentOrder();
   const worldFn = <T extends Schema>(schema: Constructor<T>, eid?: number): T | WorldComponent => {
-    const component = world.componentList[(schema as unknown as typeof Schema).index];
+    let component = world.componentList[(schema as unknown as typeof Schema).index];
+    if (component === undefined || component.schema !== (schema as unknown as typeof Schema)) {
+      component = world.componentMap.get(schema as unknown as typeof Schema) ?? unregistered(world, schema as unknown as typeof Schema);
+    }
 
     if (eid === undefined) {
       return component;
@@ -1123,27 +1152,76 @@ export const createWorld = (size?: number): World => {
   updateReuseThreshold(world);
   (world as any)[$capacity] = worldSize;
 
-  componentList.forEach((component) => {
+  let components: readonly (typeof Schema)[] = componentList;
+  if (options?.components) {
+    const wanted = new Set<typeof Schema>();
+    for (const schema of options.components) {
+      if (!schema || componentList[schema.index] !== schema) {
+        throw new Error(
+          `minECS - createWorld: ${describeType(schema)} is not a defined component (decorate it with @Component)`,
+        );
+      }
+      wanted.add(schema);
+    }
+    // Global index order keeps column order, bits and wire layout independent of the listed order.
+    components = componentList.filter((schema) => wanted.has(schema));
+  }
+  components.forEach((component) => {
     registerComponent(world, component);
   });
 
-  systemManualList.forEach(([SystemConstructor, components]) => {
+  let selected: ((entry: [typeof SystemImpl, (typeof Schema)[]]) => boolean) | null = null;
+  if (options?.systems) {
+    const wanted = new Set<unknown>(options.systems);
+    const defined = new Set<unknown>();
+    [systemManualList, systemRunList, drawSystemRunList].forEach((list) => list.forEach(([S]) => defined.add(S)));
+    for (const S of wanted) {
+      if (!defined.has(S)) {
+        throw new Error(
+          `minECS - createWorld: system ${(S as any)?.name ?? String(S)} is not a defined system (decorate it with @System)`,
+        );
+      }
+    }
+    selected = ([S, schemas]) => {
+      if (!wanted.has(S)) return false;
+      for (const schema of schemas) {
+        if (!world.componentMap.has(schema)) {
+          throw new Error(
+            `minECS - createWorld: system ${S.name} queries ${describeType(schema)}, which is not in this world's components`,
+          );
+        }
+      }
+      return true;
+    };
+  } else if (options?.components) {
+    // A component subset without a system list keeps the systems whose components are all present.
+    selected = ([, schemas]) => schemas.every((schema) => world.componentMap.has(schema));
+  }
+  const include = (entry: [typeof SystemImpl, (typeof Schema)[]]) => selected === null || selected(entry);
+
+  systemManualList.forEach((entry) => {
+    if (!include(entry)) return;
+    const [SystemConstructor, components] = entry;
     world.systems.push(registerSystem(world, SystemConstructor, components));
   });
 
   const stepSystems: StepEntry[] = [];
-  systemRunList.forEach(([SystemConstructor, components]) => {
+  systemRunList.forEach((entry) => {
+    if (!include(entry)) return;
+    const [SystemConstructor, components] = entry;
     const system = registerSystem(world, SystemConstructor, components);
     world.systems.push(system);
     stepSystems.push(makeStepEntry(SystemConstructor, system));
   });
   (world as any)[$stepSystems] = stepSystems;
 
-  drawSystemRunList.forEach(([SystemConstructor, components]) => {
+  drawSystemRunList.forEach((entry) => {
+    if (!include(entry as any)) return;
+    const [SystemConstructor, components] = entry;
     world.drawSystems.push(registerSystem(world, SystemConstructor, components));
   });
 
-  componentList.forEach((component) => {
+  components.forEach((component) => {
     sortComponentQueries(world, component);
   });
 
@@ -1196,7 +1274,13 @@ const registerComponent = (world: World, schema: typeof Schema) => {
   });
   world["componentMap"].set(schema, worldComponent);
 
-  world.componentList.push(worldComponent);
+  // Index-addressed so world(schema) finds it with one array read, even in a subset world.
+  const index = schema.index;
+  if (typeof index === "number" && index >= 0 && world.componentList[index] === undefined) {
+    world.componentList[index] = worldComponent;
+  } else {
+    world.componentList.push(worldComponent);
+  }
   world.componentSchemaStore.set(worldComponent.store, worldComponent);
 
   const table: WorldComponent[][] = (world as any)[$bitTable] || ((world as any)[$bitTable] = []);
@@ -1313,7 +1397,7 @@ const runStepSystems = (world: World) => {
     if (!shouldEntryRun(entry, frame)) continue;
 
     const system = entry.system;
-    if (systemEntities(system, world).length) {
+    if (entry.SystemClass.runEmpty || systemEntities(system, world).length) {
       system.runAll(world);
     }
   }
@@ -1331,7 +1415,7 @@ export const stepWorldDraw = (world: ReadOnlyWorld) => {
     if (!shouldEntryRun(entry, frame)) continue;
 
     const system = entry.system;
-    if (systemEntities(system, world).length) {
+    if (entry.SystemClass.runEmpty || systemEntities(system, world).length) {
       system.runAll(world);
     }
   }

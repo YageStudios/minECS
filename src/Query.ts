@@ -24,7 +24,15 @@ export const defineQuery = (components: (typeof Schema)[]) => {
 
   const createQuery = (world: World) => {
     const querySet = SparseSet();
-    const mapComponents = (c: typeof Schema) => world["componentMap"].get(c)!;
+    const mapComponents = (c: typeof Schema) => {
+      const component = world["componentMap"].get(c);
+      if (component === undefined) {
+        throw new Error(
+          `minECS - query ${$query} uses component ${(c && c.type) || String(c)}, which is not registered in this world`,
+        );
+      }
+      return component;
+    };
 
     const generations = components
       .map(mapComponents)

@@ -38,6 +38,8 @@ export class SystemImpl<T extends World = World> {
   static queryKey: string = "";
   static frameMod: number = 1;
   static frameModOffset: number = 0;
+  /** Run every step even when the system's query matches no entities (e.g. world-level systems). */
+  static runEmpty: boolean = false;
 
   query: QueryInstance<T>;
   timing: SystemTiming | null = null;

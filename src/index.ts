@@ -24,6 +24,8 @@ export {
   stepWorldTiming,
   clearWorldTiming,
   snapshot,
+  isComponentRegistered,
+  type CreateWorldOptions,
   type EntitySnapshot,
   type WorldSnapshot,
 } from "./World";

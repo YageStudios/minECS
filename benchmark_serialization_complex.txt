@@ -1,19 +1,19 @@
 ==================================================================================================
   Complex Serialization Benchmark (350 components)
-  Date: 2026-10-23T00:58:01.105Z
+  Date: 2026-10-24T08:54:15.800Z
 ==================================================================================================
 
-  Complex Serialize [No Delta]                             3.754ms     1.2514ms/op         799 ops/s    285.73KB
+  Complex Serialize [No Delta]                            10.880ms     3.6268ms/op         276 ops/s    285.73KB
     -> Payload 285.73KB
-  Complex Serialize [Delta]                                1.495ms     0.4984ms/op       2,006 ops/s     11.41KB
+  Complex Serialize [Delta]                                1.588ms     0.5294ms/op       1,889 ops/s     11.41KB
     -> Payload 11.41KB
-  Complex Deserialize [No Delta]                         107.296ms    35.7652ms/op          28 ops/s    285.73KB
+  Complex Deserialize [No Delta]                         133.281ms    44.4270ms/op          23 ops/s    285.73KB
     -> Payload 285.73KB
-  Complex Deserialize [Delta Apply]                        1.552ms     0.1552ms/op       6,445 ops/s     11.41KB
+  Complex Deserialize [Delta Apply]                        1.486ms     0.1486ms/op       6,731 ops/s     11.41KB
     -> Payload 11.41KB
 
 --------------------------------------------------------------------------------------------------
   Total Diff Summary
 --------------------------------------------------------------------------------------------------
-  No Delta TOTAL: 111.050ms, 571.47KB   |   Delta TOTAL: 3.047ms, 22.82KB
-  Diff: -97.3% time, -96.0% size
+  No Delta TOTAL: 144.161ms, 571.47KB   |   Delta TOTAL: 3.074ms, 22.82KB
+  Diff: -97.9% time, -96.0% size
