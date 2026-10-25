@@ -20,6 +20,16 @@ import { applyDelta, deserializeWorld } from "../src/Deserialize";
 import { SerialMode, type World } from "../src/Types";
 
 @Component()
+class EdBlob extends Schema {
+  @type("object")
+  bytes: Uint8Array;
+
+  @type("number")
+  @defaultValue(0)
+  n: number;
+}
+
+@Component()
 class EdPos extends Schema {
   @type("number")
   @defaultValue(1)
@@ -298,6 +308,24 @@ describe("addComponent overrides", () => {
     // Stored by copy, not by reference.
     v[0] = 99;
     expect(world(EdVec, eid).v[0]).toBe(4);
+  });
+
+  test("a typed array in an object field is accepted and kept as that typed array", () => {
+    const world = createWorld(16);
+    const eid = addEntity(world);
+    const bytes = new Uint8Array([1, 2, 3]);
+    addComponent(world, EdBlob, eid, { bytes });
+    expect(world(EdBlob, eid).bytes).toBe(bytes);
+    expect(world(EdBlob, eid).n).toBe(0);
+  });
+
+  test("a typed array in an object field is kept as given from frozen overrides too", () => {
+    const world = createWorld(16);
+    const eid = addEntity(world);
+    const bytes = new Uint8Array([7]);
+    addComponent(world, EdBlob, eid, Object.freeze({ bytes }));
+    expect(world(EdBlob, eid).bytes).toBe(bytes);
+    expect(world(EdBlob, eid).n).toBe(0);
   });
 
   test("another world's accessor can be used as overrides", () => {

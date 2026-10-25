@@ -285,13 +285,20 @@ const markComponentDirty = (state: DeltaDirtyState, world: World, store: Store, 
   }
 };
 
-type WritePlan = { keys: string[]; cols: any[]; sub: boolean[] };
+/** `toArray`: the field's schema is an array, so a typed-array override is passed to Ajv as a plain array. */
+type WritePlan = { keys: string[]; cols: any[]; sub: boolean[]; toArray: boolean[] };
+
+const isArraySchema = (property: any) => {
+  const t = property?.type;
+  return t === "array" || (Array.isArray(t) && t.includes("array"));
+};
 
 /** The component's writable keys with their columns, so the override path never does keyed store lookups. */
 const getWritePlan = (c: WorldComponent): WritePlan => {
   const cached = (c as any)[$writeTargets];
   if (cached) return cached;
-  const plan: WritePlan = { keys: [], cols: [], sub: [] };
+  const plan: WritePlan = { keys: [], cols: [], sub: [], toArray: [] };
+  const properties = (c.schema as any).schema?.properties ?? {};
   const store = c.store as any;
   const keys = Object.keys(store);
   for (let i = 0; i < keys.length; i++) {
@@ -301,6 +308,7 @@ const getWritePlan = (c: WorldComponent): WritePlan => {
     plan.keys.push(key);
     plan.cols.push(column);
     plan.sub.push(!!column[$parentArray]);
+    plan.toArray.push(!!column[$parentArray] || isArraySchema(properties[key]));
   }
   (c as any)[$writeTargets] = plan;
   return plan;
@@ -312,7 +320,8 @@ const hasOwn = Object.prototype.hasOwnProperty;
  * The object addComponent validates and writes from. Overrides are used as given (Ajv fills defaults
  * into them, as it always has); values are read like Ajv reads them, so getters and inherited values
  * count. A private plain copy is used where writing into the given object is unsafe: typed-array
- * values (converted to arrays so the array schema accepts them), toJSON values on non-plain or
+ * values of array fields (converted to arrays so the array schema accepts them; an object field
+ * keeps the typed array it was given), toJSON values on non-plain or
  * non-extensible objects (e.g. another world's accessor, whose setters would write through) and
  * frozen/sealed objects that need defaults (see addComponent). Returns null when there is nothing
  * to override.
@@ -320,13 +329,17 @@ const hasOwn = Object.prototype.hasOwnProperty;
 const resolveOverrides = (c: WorldComponent, overrides: any): { [key: string]: any } | null => {
   if (!hasOwnKeys(overrides)) return null;
   if (typeof overrides !== "object") return overrides;
-  const keys = getWritePlan(c).keys;
+  const plan = getWritePlan(c);
+  const keys = plan.keys;
   for (let i = 0; i < keys.length; i++) {
     const value = overrides[keys[i]];
     if (typeof value !== "object" || value === null) continue;
-    if (ArrayBuffer.isView(value)) return copyOverrides(overrides, keys);
+    if (ArrayBuffer.isView(value)) {
+      if (plan.toArray[i]) return copyOverrides(overrides, plan);
+      continue;
+    }
     if (typeof value.toJSON === "function") {
-      if (!isPlainExtensible(overrides)) return copyOverrides(overrides, keys);
+      if (!isPlainExtensible(overrides)) return copyOverrides(overrides, plan);
       // toJSON values are stored as their JSON form.
       overrides[keys[i]] = value.toJSON();
     }
@@ -339,7 +352,7 @@ const isPlainExtensible = (obj: object) => {
   return (proto === Object.prototype || proto === null) && Object.isExtensible(obj);
 };
 
-const copyOverrides = (overrides: any, keys: string[]) => {
+const copyOverrides = (overrides: any, { keys, toArray }: WritePlan) => {
   const input: { [key: string]: any } = {};
   // Own enumerable keys first, so unknown keys still fail validation.
   const own = Object.keys(overrides);
@@ -352,8 +365,9 @@ const copyOverrides = (overrides: any, keys: string[]) => {
       if (value === undefined) continue;
     }
     if (typeof value === "object" && value !== null) {
-      if (ArrayBuffer.isView(value)) value = Array.from(value as any);
-      else if (typeof value.toJSON === "function") value = value.toJSON();
+      if (ArrayBuffer.isView(value)) {
+        if (toArray[i]) value = Array.from(value as any);
+      } else if (typeof value.toJSON === "function") value = value.toJSON();
     }
     input[key] = value;
   }
@@ -389,7 +403,7 @@ export function addComponent<T>(
   } else if (!tryValidate(schema, input)) {
     // Ajv cannot fill defaults into a frozen or sealed object: validate a plain copy instead.
     if (input === overrides && typeof input === "object" && !Object.isExtensible(input)) {
-      input = copyOverrides(input, getWritePlan(c).keys);
+      input = copyOverrides(input, getWritePlan(c));
     }
     validateComponent(schema, eid, input);
   }
